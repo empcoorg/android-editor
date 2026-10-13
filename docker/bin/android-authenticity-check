@@ -1,0 +1,229 @@
+#!/bin/bash
+# android-authenticity-check: help spot counterfeit, rebadged or uncertified
+# Android phones BEFORE you buy. Read-only; needs no root; writes nothing to the
+# phone and sends nothing off it.
+#
+# In a shop, on the candidate phone: Settings > About > tap "Build number" 7x to
+# unlock Developer options, then Developer options > enable "USB debugging", plug
+# it into this machine, and run:
+#
+#   android-authenticity-check                 # the one attached device
+#   android-authenticity-check -s <serial>     # choose among several
+#   android-authenticity-check --json          # machine-readable output
+#
+# It inspects firmware identity, Google certification, real hardware
+# (SoC / RAM / storage / screen / cameras / sensors), IMEI documents and
+# security-patch age, then prints a verdict:
+#
+#   LIKELY GENUINE             looks like the real thing
+#   SUSPICIOUS — VERIFY        some signals off; dig deeper / negotiate
+#   LIKELY COUNTERFEIT/CLONE   multiple strong red flags
+#
+# It is a heuristic aid for a human decision, not a guarantee. A green result
+# does not certify a device; a red result does not prove bad faith — it flags
+# what to double-check against the seller's listing.
+set +e
+
+SERIAL=""; JSON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--serial) SERIAL="$2"; shift 2 ;;
+    --json) JSON=1; shift ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
+  esac
+done
+ADB=(adb); [ -n "$SERIAL" ] && ADB=(adb -s "$SERIAL")
+sh() { "${ADB[@]}" shell "$@" 2>/dev/null; }
+gp() { sh getprop "$1" | tr -d '\r'; }
+
+# --- output helpers ---------------------------------------------------------
+SCORE=0; HARD=0
+if [ "$JSON" = 1 ]; then
+  J='[]'; addj() { J=$(jq -cn --argjson a "$J" --arg k "$1" --arg v "$2" --arg f "$3" '$a + [{key:$k,value:$v,flag:$f}]'); }
+else
+  B=$'\033[1m'; R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; C=$'\033[36m'; N=$'\033[0m'
+  sec() { echo; echo "${B}== $1 ==${N}"; }
+  row() { printf '  %-30s %s\n' "$1" "$2"; }
+  # flag <ok|warn|fail|info> <label> <value>
+  flag() {
+    local f="$1" lbl="$2" val="$3" tag color
+    case "$f" in
+      ok)   tag="[ OK  ]"; color=$G ;;
+      info) tag="[INFO ]"; color=$C ;;
+      warn) tag="[WARN ]"; color=$Y; SCORE=$((SCORE+1)) ;;
+      fail) tag="[FAIL ]"; color=$R; SCORE=$((SCORE+3)); HARD=1 ;;
+    esac
+    printf '  %s%s%s %-26s %s\n' "$color" "$tag" "$N" "$lbl" "$val"
+    addj "$lbl" "$val" "$f"
+  }
+fi
+
+echo "${B}android-authenticity-check${N}  device: ${SERIAL:-<auto>}"
+"${ADB[@]}" get-state >/dev/null 2>&1 || { echo "no device attached (enable USB debugging first)"; exit 1; }
+
+# --- 1. firmware identity ---------------------------------------------------
+sec "1. Firmware identity & integrity"
+build_type=$(gp ro.build.type);           build_tags=$(gp ro.build.tags)
+ro_debuggable=$(gp ro.debuggable);        ro_secure=$(gp ro.secure)
+manufacturer=$(gp ro.product.manufacturer); brand=$(gp ro.product.brand)
+model=$(gp ro.product.model);             device=$(gp ro.product.device)
+board=$(gp ro.board.platform);            hardware=$(gp ro.hardware)
+row "marketed model"   "$(gp ro.product.marketname 2>/dev/null) / $model"
+row "brand"            "$brand"
+row "manufacturer"     "$manufacturer"
+row "device / board"   "$device / $board  (hw: $hardware)"
+
+[ "$build_type" = user ] && flag ok "build type" "$build_type" \
+  || flag fail "build type" "$build_type (retail must be 'user'; userdebug/eng = dev/counterfeit)"
+case "$build_tags" in
+  release-keys) flag ok "signing keys" "$build_tags" ;;
+  dev-keys|test-keys|"") flag warn "signing keys" "$build_tags (not release-keys)" ;;
+  *) flag warn "signing keys" "$build_tags" ;;
+esac
+[ "$ro_debuggable" = 0 ] && flag ok "ro.debuggable" "$ro_debuggable" || flag fail "ro.debuggable" "$ro_debuggable (must be 0 on retail)"
+[ "$ro_secure" = 1 ] && flag ok "ro.secure" "$ro_secure" || flag fail "ro.secure" "$ro_secure (must be 1 on retail)"
+
+fp_main=$(gp ro.build.fingerprint)
+fp_vendor=$(gp ro.vendor.build.fingerprint); fp_odm=$(gp ro.odm.build.fingerprint)
+fp_product=$(gp ro.product.build.fingerprint); fp_boot=$(gp ro.bootimage.build.fingerprint)
+row "fingerprint"      "$fp_main"
+mism=0
+for f in "$fp_vendor" "$fp_odm" "$fp_product" "$fp_boot"; do
+  [ -n "$f" ] && [ "$f" != "$fp_main" ] && mism=$((mism+1))
+done
+[ "$mism" = 0 ] && flag ok "fingerprint match" "system/vendor/odm/product/boot agree" \
+  || flag warn "fingerprint match" "$mism partition(s) differ from ro.build.fingerprint"
+
+generic=0; low_mfr=$(printf '%s' "$manufacturer" | tr 'A-Z' 'a-z')
+case "$low_mfr" in alps|unknown|generic|mtk|mediatek|spreadtrum|""|android) generic=1 ;; esac
+case "$board" in mt6*|mt8*|sc9*|ums*|sp*) generic=1 ;; esac
+[ "$generic" = 1 ] && flag warn "board identity" "generic/white-box board ($manufacturer / $board) — common on clones & reference designs" \
+  || flag ok "board identity" "$manufacturer / $board"
+
+# --- 2. Google certification ------------------------------------------------
+sec "2. Google certification (Play / banking / WhatsApp need this)"
+gmsver=$(gp ro.com.google.gmsversion); gmsbuilt=$(gp persist.sys.gms_built)
+has_gms=$(sh pm path com.google.android.gms | head -1)
+row "GMS present"      "${has_gms:-none}"
+if [ -n "$has_gms" ] && [ -n "$gmsver" ]; then
+  flag info "Play Services" "installed (gmsversion=$gmsver, gms_built=$gmsbuilt)"
+  echo "  ${C}note:${N} a device can have Play Services yet still be uncertified (fails"
+  echo "        Play Integrity). Install a 'Play Integrity API Checker' app on it, or"
+  echo "        open Play Store > Profile > Settings and look for a certification warning."
+else
+  flag warn "Play Services" "not found — no Google apps/certification; many banking apps won't run"
+fi
+
+# --- 3. real hardware (compare against the seller's listed specs) -----------
+sec "3. Real hardware (verify these against the listing)"
+soc_hw=$(sh "grep -m1 -i hardware /proc/cpuinfo" | tr -d '\r' | sed 's/^[^:]*: *//')
+cores=$(sh "grep -c ^processor /proc/cpuinfo" | tr -d '\r')
+maxfreq=$(sh "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null" | tr -d '\r')
+ram_gb=$(sh "awk '/MemTotal/{printf \"%.1f\", \$2/1048576}' /proc/meminfo" | tr -d '\r')
+storage=$(sh "df -h /data" | awk 'NR==2{print $2" total, "$4" free"}' | tr -d '\r')
+wmsize=$(sh wm size | tr -d '\r' | sed 's/.*: //'); wmdens=$(sh wm density | tr -d '\r' | sed 's/.*: //')
+row "SoC (cpuinfo)"    "$soc_hw"
+row "board platform"   "$board"
+row "CPU cores"        "$cores${maxfreq:+  (max $((maxfreq/1000)) MHz)}"
+row "RAM"              "${ram_gb} GB"
+row "storage /data"    "$storage"
+row "screen"           "$wmsize @ ${wmdens}dpi"
+if awk "BEGIN{exit !(${ram_gb:-0} < 3)}"; then
+  flag warn "RAM vs claims" "${ram_gb} GB is low-end — check the listing didn't promise 8/12 GB"
+else
+  flag ok "RAM" "${ram_gb} GB"
+fi
+
+cams=$(sh "dumpsys media.camera 2>/dev/null | grep -ciE 'camera (device|id)|device [0-9]+:'")
+camf=$(sh "pm list features" | grep -c 'android.hardware.camera')
+row "cameras"          "~${cams:-?} detected (features: $camf)"
+
+sens=$(sh dumpsys sensorservice 2>/dev/null)
+has_sensor() { printf '%s' "$sens" | grep -qi "$1"; }
+gyro=$(has_sensor gyroscope && echo yes || echo NO)
+compass=$(has_sensor "magnetic" && echo yes || echo NO)
+baro=$(has_sensor barometer && echo yes || echo no)
+fp=$(sh "pm list features" | grep -q 'android.hardware.fingerprint' && echo yes || echo NO)
+row "gyroscope"        "$gyro"
+row "compass"          "$compass"
+row "barometer"        "$baro"
+row "fingerprint"      "$fp"
+[ "$gyro" = NO ] && flag warn "gyroscope" "absent — many games/AR break; clones often omit it" || flag ok "gyroscope" "present"
+
+
+# --- 4. identity documents (IMEI / serial) ----------------------------------
+sec "4. Identity documents"
+imei1=$(sh "service call iphonesubinfo 1 2>/dev/null" | grep -oE "[0-9]{15}" | head -1)
+imei2=$(sh "service call iphonesubinfo 3 2>/dev/null" | grep -oE "[0-9]{15}" | head -1)
+serial=$(gp ro.serialno); [ "$serial" = unknown ] && serial=$(gp ro.boot.serialno)
+row "serial"           "${serial:-<none>}"
+row "IMEI (sim1)"      "${imei1:-<could not read without root>}"
+[ -n "$imei2" ] && row "IMEI (sim2)" "$imei2"
+luhn() { # valid 15-digit IMEI passes the Luhn check
+  local s="$1" sum=0 d i alt=0
+  [ ${#s} -eq 15 ] || return 1
+  for ((i=${#s}-1; i>=0; i--)); do
+    d=${s:i:1}
+    if [ $alt = 1 ]; then d=$((d*2)); [ $d -gt 9 ] && d=$((d-9)); fi
+    sum=$((sum+d)); alt=$((1-alt))
+  done
+  [ $((sum%10)) = 0 ]
+}
+if [ -z "$imei1" ]; then
+  flag info "IMEI" "not readable over adb on this build (dial *#06# on the phone to compare)"
+elif [ "$imei1" = "000000000000000" ] || [ "$imei1" = "111111111111111" ]; then
+  flag fail "IMEI" "$imei1 — null/placeholder IMEI (illegal, classic clone marker)"
+elif luhn "$imei1"; then
+  flag ok "IMEI" "$imei1 passes the Luhn check (well-formed)"
+else
+  flag fail "IMEI" "$imei1 fails the Luhn check (malformed / spoofed)"
+fi
+if [ -z "$serial" ]; then flag warn "serial" "empty serial"; else flag ok "serial" "$serial"; fi
+
+# --- 5. freshness / age -----------------------------------------------------
+sec "5. Freshness (a 'brand new flagship' with an old patch is a red flag)"
+sp=$(gp ro.build.version.security_patch); rel=$(gp ro.build.version.release)
+builddate=$(gp ro.build.date)
+row "Android release"  "$rel"
+row "security patch"   "$sp"
+row "build date"       "$builddate"
+sp_year=${sp%%-*}; now_year=$(date +%Y)
+if [ -n "$sp_year" ] && [ "$sp_year" -lt $((now_year-2)) ] 2>/dev/null; then
+  flag warn "security patch" "$sp is ~$((now_year-sp_year))+ years old — unusual for a current retail device"
+else
+  flag ok "security patch" "$sp"
+fi
+
+# --- 6. suspicious software -------------------------------------------------
+sec "6. Suspicious / spoofing software"
+pkgs=$(sh pm list packages)
+spoofers=$(printf '%s' "$pkgs" | grep -iE 'deviceid|idchanger|spoof|clone|counterfeit|ram.?boost|superboost|devicespoof|xprivacy|luckypatcher|rootcloak')
+row "known spoofers"   "${spoofers:-none}"
+if [ -n "$spoofers" ]; then flag warn "spoofing apps" "installed — may be faking specs/identity"; else flag ok "spoofing apps" "none detected"; fi
+
+# --- verdict ----------------------------------------------------------------
+if [ "$JSON" = 1 ]; then
+  if [ "$HARD" = 1 ]; then vt="LIKELY COUNTERFEIT/CLONE"
+  elif [ "$SCORE" -ge 4 ]; then vt="SUSPICIOUS — VERIFY"
+  elif [ "$SCORE" -ge 1 ]; then vt="SUSPICIOUS — VERIFY (minor)"
+  else vt="LIKELY GENUINE"; fi
+  jq -cn --arg v "$vt" --argjson score "$SCORE" --argjson hard "$HARD" --argjson items "$J" \
+    '{verdict:$v, score:$score, hardFail:$hard, items:$items}'
+  exit 0
+fi
+
+echo; echo "${B}== VERDICT ==${N}"
+if [ "$HARD" = 1 ]; then
+  echo "  ${R}LIKELY COUNTERFEIT / CLONE${N} — strong red flags (non-'user' build, bad keys, null/spoofed IMEI, or no Play Services)."
+  echo "  Do not buy without resolving these."
+elif [ "$SCORE" -ge 4 ]; then
+  echo "  ${Y}SUSPICIOUS — VERIFY${N} — several signals are off (score $SCORE). Check RAM/cores/cameras/sensors"
+  echo "  against the listing, confirm Play certification, and compare the IMEI on the box / *#06#."
+elif [ "$SCORE" -ge 1 ]; then
+  echo "  ${Y}SUSPICIOUS — VERIFY (minor)${N} — a couple of soft signals (score $SCORE). Worth a look, not alarming."
+else
+  echo "  ${G}LIKELY GENUINE${N} — no red flags found. Still confirm Play certification and that specs match before paying."
+fi
+echo "  (heuristic score: $SCORE; hard-fail: $HARD)"
+
