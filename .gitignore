@@ -21,3 +21,6 @@ target/
 # ── Logs & editor scratch ────────────────────────────────────────────────
 *.log
 *.swp
+
+# ── ai-backend runtime state (host-side, under ~/.android-editor) ─────────
+/.android-editor/
