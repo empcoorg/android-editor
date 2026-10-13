@@ -147,6 +147,32 @@ docker compose -f docker-compose.yml -f docker-compose.mac-usb.yml exec dev \
 What you type into the agent leaves the Mac for the RunPod GPU; the phone work
 itself stays entirely local.
 
+### Automatic backend selection
+
+`bin/ai-backend` picks between local Ollama and the RunPod pod by **model
+capability**, and manages the pod to control cost. It runs on the **host**
+(needs `runpodctl`, `docker`, `curl`, `jq`):
+
+```bash
+make ai-backend            # show backend, models, pod state, idle timer
+make ai-pick TIER=large    # default|large — starts the pod only if a bigger model is needed
+make ai-watch              # idle watcher: stops the pod after IDLE_MINUTES (default 15) of no activity
+make ai-beat               # record activity (resets the idle timer)
+bin/ai-backend recommend "flash boot.img"   # suggest which AI tool fits a task
+```
+
+Policy: use **local** when it fits the task tier; when a task needs a bigger
+model than local can run well and the pod offers one, **start the pod on
+demand**, then **stop it after the idle timeout** so billing pauses. Tune with
+`IDLE_MINUTES` and `LOCAL_MAX_B` (params/B local is trusted to run well); set
+`AI_BACKEND_DRYRUN=1` to preview a decision without changing anything.
+
+The `recommend` subcommand routes by task: terminal/adb/fastboot/flash work →
+**OpenCode** (autonomous), interactive coding → **Cline**, mode-specialized
+(architect/debug) → **Roo Code**. Runtime auto-hand-off between a VS Code
+extension and a CLI is not technically possible, so this is a recommender, not
+an automatic switch.
+
 ## Phones over USB
 
 Docker Desktop cannot pass USB devices to containers, but its VM kernel has the
@@ -269,5 +295,6 @@ docker/bin/vscode-ai-config     Cline + Roo Code config
 docker/bin/android-full-backup  phone backup before rooting
 docker/bin/android-doctor       tools, models, phones
 docker/bin/android-authenticity-check  spot counterfeit/rebadged phones before buying
+bin/ai-backend            capability-aware local-vs-pod model selection + pod cost control
 workspace/                      your projects and backups (mounted at /workspace)
 ```

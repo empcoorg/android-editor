@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 DC = $(COMPOSE) -f docker-compose.yml -f docker-compose.mac-usb.yml
 USBIP_EXCLUDE = $(HOME)/.usbip-share/exclude
 
-.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status runpod-up runpod-down runpod-status clean
+.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status runpod-up runpod-down runpod-status ai-backend ai-pick ai-watch ai-beat clean
 
 help:             ## list targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/' | expand -t 18
@@ -33,6 +33,15 @@ runpod-require-pod: # internal: fail clearly if no RunPod pod id is configured
 runpod-status:    ## pod state and the backend the agent is using
 	@grep -m1 '^LLM_BACKEND=' .env
 	runpodctl pod get $(RUNPOD_POD_ID) 2>/dev/null || runpodctl pod list
+# Capability-aware backend selection: local Ollama vs the RunPod GPU pod.
+ai-backend:       ## show backend, models, pod state and idle timer
+	@bin/ai-backend status
+ai-pick:          ## choose backend for a task tier: make ai-pick TIER=large (default|large)
+	@bin/ai-backend pick $(or $(TIER),default)
+ai-beat:          ## record AI activity (resets the pod idle timer)
+	@bin/ai-backend beat
+ai-watch:         ## run the idle watcher: stops the pod after IDLE_MINUTES idle
+	@bin/ai-backend watch
 models:           ## download the two models into the host Ollama if missing
 	$(DC) exec dev ai-setup
 doctor:           ## tools, models and attached phones
