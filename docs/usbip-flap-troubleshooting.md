@@ -38,3 +38,22 @@ USB/IP, no container/Magisk config fixes it.
 3. For long/multi-reboot operations (Magisk module installs), prefer driving the
    **on-phone Magisk app UI** over remote orchestration, so a mid-step USB reset
    can't corrupt the sequence.
+
+## Refinement: distinguish USB-layer reset from a true physical disconnect
+The `usbip-share` server log error codes tell you which:
+- `status -5` (EIO) on the adb endpoint = I/O error, often a marginal cable/port
+  failing under bulk-transfer load (small commands still work; big pushes drop).
+- `status -32` (EPIPE) = the phone's adbd closed the connection (stall/timeout).
+
+If the drop self-heals (server logs `exported … as bus id` again a few seconds
+later), the phone is still physically present and it's a USB/IP re-attach churn.
+
+**If the Mac stops seeing the phone entirely, it's a true physical disconnect:**
+```
+system_profiler SPUSBDataType | grep -iE 'Mini|MediaTek|0e8d'   # empty = Mac lost it
+```
+When that is empty, USB/IP has nothing to forward — reseat firmly, try another
+cable **and** another port (on the phone and the Mac). A "new" cable can still be
+charge-only or damaged; USB-C needs a firm click. Note: a USB re-enumeration is
+**not** an Android reboot — the phone stays on its home screen with the same
+`/proc/uptime`; only the USB gadget resets.
