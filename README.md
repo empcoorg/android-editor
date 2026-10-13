@@ -161,14 +161,48 @@ picked up within two seconds.
 - **Leaving a phone to the Mac:** `make usb-release DEV=<serial>`, and
   `make usb-reclaim DEV=<serial>` to take it back. `make usb-status` lists
   what is released.
-- **Works from the container:** adb and fastboot (tested on a MediaTek
-  mt6739). Samsung download mode and Qualcomm EDL use vendor-specific USB
-  classes that macOS does not claim, so they should pass through too; untested.
+- **Works from the container:** adb and fastboot. Samsung download mode and
+  Qualcomm EDL use vendor-specific USB classes that macOS does not claim, so
+  they should pass through too; untested.
 - **MediaTek BROM/preloader does not:** macOS's own serial driver claims those
   modes first, so run mtkclient natively on the Mac for BROM work
   (`git clone https://github.com/bkerler/mtkclient && pip install ./mtkclient`).
 - **Linux hosts** need no USB/IP: use `docker-compose.linux-usb.yml` instead of
   `docker-compose.mac-usb.yml`.
+
+## Checking a phone before you buy it
+
+`android-authenticity-check` is a read-only, root-free aid for spotting
+counterfeit, rebadged or uncertified phones **at the point of sale**. It touches
+nothing on the device and sends nothing off it.
+
+On the candidate phone, enable Developer options (Settings > About > tap "Build
+number" 7x) and USB debugging, plug it in, then:
+
+```bash
+android-authenticity-check            # the one attached device
+android-authenticity-check -s <serial>
+android-authenticity-check --json     # machine-readable
+```
+
+It reports, then gives a verdict (`LIKELY GENUINE` / `SUSPICIOUS — VERIFY` /
+`LIKELY COUNTERFEIT/CLONE`):
+
+- **Firmware integrity** — `user` build, `release-keys`, `ro.secure=1`,
+  consistent fingerprints across partitions.
+- **Board identity** — flags generic white-box/reference boards (`alps`, `mtk`,
+  unknown manufacturers) that clones and rebadged devices often ship on.
+- **Google certification** — Play Services presence; notes that having GMS is
+  not the same as passing Play Integrity (install a "Play Integrity API
+  Checker" app for that).
+- **Real hardware** — SoC, cores, RAM, storage, screen, cameras and sensors
+  (gyro/compass/fingerprint), to compare against the seller's listed specs.
+- **Identity documents** — IMEI (null/placeholder or Luhn-invalid = red flag)
+  and serial.
+- **Freshness** — a "brand new flagship" with a multi-year-old security patch.
+- **Spoofing apps** — known spec/identity-faking packages.
+
+It is a heuristic aid for a human decision, not a guarantee.
 
 ## Rooting a phone
 
@@ -234,5 +268,6 @@ docker/bin/ai-setup             OpenCode config + model download
 docker/bin/vscode-ai-config     Cline + Roo Code config
 docker/bin/android-full-backup  phone backup before rooting
 docker/bin/android-doctor       tools, models, phones
+docker/bin/android-authenticity-check  spot counterfeit/rebadged phones before buying
 workspace/                      your projects and backups (mounted at /workspace)
 ```
