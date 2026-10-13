@@ -1,0 +1,9 @@
+# Linux hosts: hand the USB bus to the container so adb, fastboot, heimdall,
+# edl and mtk can talk to phones directly.
+#   docker compose -f docker-compose.yml -f docker-compose.linux-usb.yml run --rm dev
+services:
+  dev:
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/udev:/run/udev:ro

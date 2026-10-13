@@ -1,0 +1,5 @@
+workspace/
+.env
+.git/
+*.md
+macos/

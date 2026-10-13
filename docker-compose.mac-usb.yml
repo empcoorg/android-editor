@@ -1,0 +1,39 @@
+# macOS: USB over USB/IP.
+#
+# Docker Desktop cannot pass USB devices through, but its VM kernel has the
+# USB/IP client (vhci_hcd) built in. Run the server on the Mac first:
+#
+#   bash macos/host-services.sh   # builds/starts macos/usbip-share (needs Rust)
+#
+# then start the stack with this override; the `usbip` sidecar imports every
+# exported phone into the VM and the dev shell sees it under /dev/bus/usb:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.mac-usb.yml run --rm dev
+#
+# A USB interface can be claimed by one side at a time: if the Mac's own adb
+# server holds a phone, the container cannot use it until it lets go.
+services:
+  usbip:
+    build: ./docker/usbip-client
+    image: android-editor-usbip-client:latest
+    privileged: true
+    restart: unless-stopped
+    stop_grace_period: 10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      USBIP_SERVER: ${USBIP_SERVER:-host.docker.internal}
+      USBIP_INTERVAL: ${USBIP_INTERVAL:-2}
+
+  dev:
+    privileged: true
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      # Reuse the Mac's adb key so phones that already trust this computer do
+      # not ask again for the container (copied on first start, see entrypoint).
+      - ${ADB_HOST_KEYS:-${HOME}/.android}:/run/host-android:ro
+    depends_on:
+      usbip:
+        condition: service_started

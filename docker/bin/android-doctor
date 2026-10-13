@@ -1,0 +1,40 @@
+#!/bin/bash
+# Versions of the bundled tools, the two models, and attached phones.
+v() { printf '  %-16s %s\n' "$1" "$(bash -c "$2" 2>&1 | head -n1)"; }
+echo "Build apps"
+v java          "java -version"
+v java-11       "/opt/java-11/bin/java -version"
+v maven         "mvn -v 2>&1 | head -1"
+v gradle        "gradle --version 2>&1 | grep -m1 -E '^Gradle [0-9]' || echo 'FAILED: gradle --version'"
+v gradle7       "gradle7 --version 2>&1 | grep -m1 -E '^Gradle [0-9]' || echo 'FAILED: gradle7 --version'"
+v build-tools   "ls \$ANDROID_HOME/build-tools | tr '\n' ' '"
+v platforms     "ls \$ANDROID_HOME/platforms | tr '\n' ' '"
+v ndk           "ls \$ANDROID_HOME/ndk 2>/dev/null | tr '\n' ' ' || true"
+echo "Root phones"
+v adb           "adb --version"
+v fastboot      "fastboot --version"
+v magisk        "readlink \$MAGISK_APK"
+v magiskboot    "magiskboot 2>&1 | head -1"
+v payload-dumper "payload-dumper-go -h 2>&1 | head -1"
+v unpack_bootimg "unpack_bootimg --help | head -1"
+v avbtool       "avbtool version"
+v simg2img      "simg2img 2>&1 | head -1"
+v lpunpack      "lpdump --help 2>&1 | head -1"
+v sdat2img      'python3 /opt/tools/bin/sdat2img 2>&1 | grep -m1 -iE "sdat2img|usage" || echo present'
+v erofs-utils   'dpkg -s erofs-utils | grep -m1 ^Version | cut -d" " -f2'
+v f2fs-tools    'dpkg -s f2fs-tools | grep -m1 ^Version | cut -d" " -f2'
+v binwalk       "binwalk -h 2>&1 | grep -m1 -i binwalk"
+v mtk           "mtk --help 2>&1 | grep -m1 usage"
+v edl           "edl --help 2>&1 | grep -m1 -oE 'edl\\.py .*' || echo present"
+v heimdall      "heimdall version"
+echo "AI"
+v opencode      "opencode --version"
+v ollama        "curl -fsS -m 5 \$OLLAMA_HOST/api/version | jq -r '\"server \" + .version + \" at $OLLAMA_HOST\"'"
+for m in "${OPENCODE_MODEL#ollama/}" "${OPENCODE_FALLBACK_MODEL#ollama/}"; do
+  if curl -fsS -m 5 "$OLLAMA_HOST/api/tags" 2>/dev/null | jq -e --arg m "$m" '.models[] | select(.name == $m)' >/dev/null; then s=installed; else s="MISSING (ai-setup pulls it)"; fi
+  printf '  %-16s %s %s\n' model "$m" "$s"
+done
+echo "Phones"
+echo "  adb:";      adb devices -l 2>/dev/null | sed -n '2,$p' | sed '/^$/d; s/^/    /'
+echo "  fastboot:"; fastboot devices 2>/dev/null | sed 's/^/    /'
+echo "  usb:";      lsusb 2>/dev/null | grep -v 'root hub' | sed 's/^/    /'

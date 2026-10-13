@@ -1,0 +1,60 @@
+# android-editor
+#
+#   make dev-up      start the dev container (plus host services on a Mac)
+#   make attach      shell in it
+#   VS Code          "Dev Containers: Reopen in Container" (see README)
+#
+# Models are served by Ollama on the host (127.0.0.1:11436 on a Mac, started by
+# macos/host-services.sh), not in a container.
+#
+# USB: docker-compose.mac-usb.yml (USB/IP, macOS) or docker-compose.linux-usb.yml.
+
+# One project name for make, docker compose and VS Code Dev Containers, so
+# they all reuse the same dev container instead of creating parallel ones.
+name: android-editor
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_NDK: ${INSTALL_NDK:-0}
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: android-editor:latest
+    # Android build-tools are x86_64-only; on Apple silicon Docker Desktop runs
+    # this through Rosetta (Settings > General > "Use Rosetta for x86_64/amd64").
+    platform: linux/amd64
+    hostname: android-editor
+    stdin_open: true
+    tty: true
+    init: true
+    working_dir: /workspace
+    environment:
+      OLLAMA_HOST: ${OLLAMA_URL:-http://host.docker.internal:11436}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32768}
+      # Models every AI tool in the container uses. The default must support
+      # tool calling; the fallback only feeds OpenCode's read-only @reasoner.
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-ollama/qwen3:14b}
+      LLM_BACKEND: ${LLM_BACKEND:-local}
+      RUNPOD_LLM_URL: ${RUNPOD_LLM_URL:-}
+      RUNPOD_LLM_KEY: ${RUNPOD_LLM_KEY:-}
+      RUNPOD_LLM_MODEL: ${RUNPOD_LLM_MODEL:-}
+      OPENCODE_FALLBACK_MODEL: ${OPENCODE_FALLBACK_MODEL:-ollama/deepseek-r1:14b-qwen-distill-q8_0}
+      VSCODE_PLAN_MODEL: ${VSCODE_PLAN_MODEL:-}
+      ROO_REASONER_MODES: ${ROO_REASONER_MODES-}
+    volumes:
+      - ./workspace:/workspace
+      - dev-home:/home/dev
+      - gradle-cache:/home/dev/.gradle
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The container's adb server, for tools on the Mac (Android Studio, scrcpy, a
+    # host terminal): `adb -P 5038 devices`. Loopback only.
+    ports:
+      - "127.0.0.1:${ADB_FORWARD_PORT:-5038}:5037"
+
+volumes:
+  dev-home:
+  gradle-cache:

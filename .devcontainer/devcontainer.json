@@ -1,0 +1,34 @@
+// VS Code Dev Container for android-editor (macOS host).
+//
+// "Dev Containers: Reopen in Container" starts the same `android-editor-dev-1`
+// container that `make dev-up` / `make attach` use, installs Cline and Roo Code
+// inside it, and points both at the models from .env. Extensions, terminals and
+// tasks all run in the container, so they see the phones over USB/IP exactly
+// like `make attach` does.
+{
+  "name": "android-editor",
+  "dockerComposeFile": ["../docker-compose.yml", "../docker-compose.mac-usb.yml"],
+  "service": "dev",
+  "runServices": ["dev", "usbip"],
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  // Closing VS Code leaves the container (and any adb session) running.
+  "shutdownAction": "none",
+  // On the Mac, before the container starts: USB/IP server + Metal Ollama.
+  "initializeCommand": "bash macos/host-services.sh",
+  // Refresh model settings from .env every time VS Code connects.
+  "postAttachCommand": "ai-setup --config-only --force >/dev/null; vscode-ai-config",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "saoudrizwan.claude-dev",
+        "RooVeterinaryInc.roo-cline"
+      ],
+      "settings": {
+        "roo-cline.autoImportSettingsPath": "/home/dev/.config/android-editor/roo-code-settings.json",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.cwd": "/workspace"
+      }
+    }
+  }
+}
