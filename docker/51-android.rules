@@ -1,0 +1,17 @@
+# Broad rules so adb/fastboot/heimdall/edl/mtk can open the device as the
+# plugdev group. Only used when the container runs with USB passthrough.
+SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Google
+SUBSYSTEM=="usb", ATTR{idVendor}=="04e8", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Samsung
+SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Qualcomm (EDL 9008)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0e8d", MODE="0660", GROUP="plugdev", TAG+="uevent"  # MediaTek (preloader/BROM)
+SUBSYSTEM=="usb", ATTR{idVendor}=="2a70", MODE="0660", GROUP="plugdev", TAG+="uevent"  # OnePlus
+SUBSYSTEM=="usb", ATTR{idVendor}=="22b8", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Motorola
+SUBSYSTEM=="usb", ATTR{idVendor}=="2717", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Xiaomi
+SUBSYSTEM=="usb", ATTR{idVendor}=="12d1", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Huawei
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bb4", MODE="0660", GROUP="plugdev", TAG+="uevent"  # HTC
+SUBSYSTEM=="usb", ATTR{idVendor}=="1004", MODE="0660", GROUP="plugdev", TAG+="uevent"  # LG
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fce", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Sony
+SUBSYSTEM=="usb", ATTR{idVendor}=="2b4c", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Fairphone / Zuk
+SUBSYSTEM=="usb", ATTR{idVendor}=="1f3a", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Allwinner
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Rockchip
+SUBSYSTEM=="usb", ATTR{idVendor}=="1d6b", MODE="0660", GROUP="plugdev", TAG+="uevent"  # Linux Foundation (gadget)

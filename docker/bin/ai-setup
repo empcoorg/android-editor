@@ -1,0 +1,148 @@
+#!/bin/bash
+# ai-setup: configure OpenCode for the two local models and make sure Ollama has them.
+#
+#   default model   $OPENCODE_MODEL           (qwen3:14b; must support tool calling)
+#   second opinion  $OPENCODE_FALLBACK_MODEL  (deepseek-r1:14b-qwen-distill-q8_0),
+#                   a read-only @reasoner subagent the default model is told to
+#                   call after two failures or before risky flashing
+#
+#   ai-setup                 write the config, then pull any missing model
+#   ai-setup --config-only   write the config only (no network)
+#
+# Values come from .env through docker compose; the config is regenerated on
+# every container start, so edit .env rather than opencode.json.
+set -euo pipefail
+
+# Backend: "local" uses the Mac's Ollama; "runpod" uses a remote OpenAI-compatible
+# endpoint (the RunPod vLLM pod). Set by .env (LLM_BACKEND, RUNPOD_LLM_*).
+BACKEND="${LLM_BACKEND:-local}"
+RP_URL="${RUNPOD_LLM_URL:-}"; RP_KEY="${RUNPOD_LLM_KEY:-}"; RP_MODEL="${RUNPOD_LLM_MODEL:-}"
+HOST="${OLLAMA_HOST:-http://host.docker.internal:11436}"
+case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
+CTX="${OLLAMA_NUM_CTX:-32768}"
+DEFAULT="${OPENCODE_MODEL:-ollama/qwen3:14b}"
+FALLBACK="${OPENCODE_FALLBACK_MODEL:-ollama/deepseek-r1:14b-qwen-distill-q8_0}"
+D="${DEFAULT#ollama/}"; F="${FALLBACK#ollama/}"
+CONFIG_ONLY=0
+for a in "$@"; do
+  case "$a" in
+    --config-only) CONFIG_ONLY=1 ;;
+    --force) ;;  # accepted for compatibility; the config is always rewritten
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) echo "unknown option: $a" >&2; exit 2 ;;
+  esac
+done
+
+# bash + external_directory are allowed: this container exists to run adb,
+# fastboot and the firmware tools, which live outside /workspace and touch
+# /dev/bus/usb. Without that, `opencode run` auto-rejects every command.
+DIR="$HOME/.config/opencode"; mkdir -p "$DIR"
+
+if [ "$BACKEND" = runpod ]; then
+  if [ -z "$RP_URL" ] || [ -z "$RP_MODEL" ]; then
+    echo "LLM_BACKEND=runpod but RUNPOD_LLM_URL/RUNPOD_LLM_MODEL are unset" >&2; exit 1
+  fi
+  # Remote vLLM on RunPod, OpenAI-compatible. One model, so it is both the main
+  # agent and the @reasoner.
+  jq -n --arg url "$RP_URL" --arg key "$RP_KEY" --arg m "$RP_MODEL" '{
+    "$schema": "https://opencode.ai/config.json",
+    enabled_providers: ["runpod"],
+    provider: { runpod: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "RunPod vLLM",
+      options: ({ baseURL: $url } + (if $key != "" then { apiKey: $key } else {} end)),
+      models: { ($m): { name: ($m + " (RunPod GPU)"), limit: { context: 32768, output: 8192 } } }
+    } },
+    model: ("runpod/" + $m),
+    small_model: ("runpod/" + $m),
+    agent: { reasoner: {
+      description: "Second opinion. Call it when you are stuck: a command or build failed twice, an error makes no sense, or before any step that writes to a phone that you are not sure is safe. It cannot run commands or edit files.",
+      mode: "subagent", model: ("runpod/" + $m), temperature: 0.6,
+      permission: { edit: "deny", bash: "deny", webfetch: "deny" },
+      prompt: "You are a careful senior engineer acting as a second opinion for a coding agent that builds Android apps and roots Android phones. You cannot run commands. Identify the most likely root cause from the evidence, say what would confirm it, and end with a short numbered plan. Flag any step that could brick a device or lose data."
+    } },
+    permission: { bash: "allow", external_directory: "allow" },
+    autoupdate: false, share: "disabled"
+  }' > "$DIR/opencode.json"
+  echo "opencode: RunPod $RP_MODEL at $RP_URL"
+else
+# bash + external_directory are allowed: this container exists to run adb,
+# fastboot and the firmware tools, which live outside /workspace and touch
+# /dev/bus/usb. Without that, `opencode run` auto-rejects every command.
+DIR="$HOME/.config/opencode"; mkdir -p "$DIR"
+jq -n --arg host "$HOST" --arg d "$D" --arg f "$F" --argjson ctx "$CTX" '{
+  "$schema": "https://opencode.ai/config.json",
+  enabled_providers: ["ollama"],
+  provider: { ollama: {
+    npm: "@ai-sdk/openai-compatible",
+    name: "Ollama",
+    options: { baseURL: ($host + "/v1") },
+    models: {
+      ($d): { name: ($d + " (default)"),        limit: { context: $ctx, output: 8192 } },
+      ($f): { name: ($f + " (second opinion)"), limit: { context: $ctx, output: 8192 } }
+    }
+  } },
+  model: ("ollama/" + $d),
+  small_model: ("ollama/" + $d),
+  agent: { reasoner: {
+    description: "Second opinion from a slower reasoning model. USE THIS whenever the user says @reasoner, asks for a second opinion or a sanity check, when a command or build has failed twice, when an error makes no sense, or before any step that writes to a phone (flash, erase, unlock, patch a boot image) that you are not sure is safe. Pass the exact commands, their full output and what you already tried; it returns a diagnosis and a numbered plan. It cannot run commands or edit files.",
+    mode: "subagent",
+    model: ("ollama/" + $f),
+    temperature: 0.6,
+    permission: { edit: "deny", bash: "deny", webfetch: "deny" },
+    prompt: "You are a careful senior engineer acting as a second opinion for a coding agent that builds Android apps and roots Android phones. You cannot run commands. Think the problem through, identify the most likely root cause from the evidence given, say what evidence would confirm it, and end with a short numbered plan of concrete commands or edits. Flag any step that could brick a device or lose data."
+  } },
+  permission: { bash: "allow", external_directory: "allow" },
+  autoupdate: false,
+  share: "disabled"
+}' > "$DIR/opencode.json"
+
+fi
+
+cat > "$DIR/AGENTS.md" <<'RULES'
+# Working rules (generated by ai-setup; edits are overwritten)
+
+## Delegating to the reasoner
+
+`reasoner` is a subagent running a different, slower reasoning model. You reach
+it with the `task` tool, `subagent_type: "reasoner"`. It cannot run commands or
+edit files, so give it everything it needs in the prompt: the exact commands you
+ran, their full output, what you already tried and what you are trying to do.
+
+**Call it, without being asked again, whenever any of these is true:**
+
+- The message mentions `@reasoner`, or asks for a second opinion, a sanity
+  check, or "ask the reasoner". Delegate first; do not answer from your own
+  knowledge instead.
+- A command, build or flash step has failed twice.
+- An error does not make sense to you, or the evidence is contradictory.
+- You are about to write to a phone's partitions (flash, erase, unlock, patch a
+  boot image) and are not certain the step is safe.
+
+Report its answer, then say whether you agree and what you will do next. You
+remain responsible for the final decision; if its plan looks wrong, say so.
+
+## Phones
+
+- Use `adb` / `fastboot` with `-s <serial>` whenever more than one device is
+  listed. `android-doctor` shows what is attached.
+- Back up before rooting or flashing: `android-full-backup -s <serial>`, which
+  writes to /workspace/backups.
+- Rooting with Magisk: get the stock boot.img (or init_boot.img) from the
+  firmware or a backup, `adb install $MAGISK_APK`, patch in the app or with
+  `magiskboot` here, then `fastboot flash boot <patched>.img`. The bootloader
+  must be unlocked first.
+RULES
+
+echo "opencode: default $D, @reasoner $F (Ollama at $HOST)"
+[ "$CONFIG_ONLY" = 1 ] && exit 0
+
+if ! curl -fsS -m 5 "$HOST/api/version" >/dev/null 2>&1; then
+  echo "ollama is not reachable at $HOST; on a Mac run: bash macos/host-services.sh" >&2
+  exit 1
+fi
+have=$(curl -fsS "$HOST/api/tags" | jq -r '.models[].name')
+for m in "$D" "$F"; do
+  if grep -qx "$m" <<<"$have"; then echo "model  $m present"
+  else echo "pulling $m"; ollama pull "$m"; fi
+done

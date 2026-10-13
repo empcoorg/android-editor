@@ -1,0 +1,76 @@
+#!/bin/bash
+# Lightweight `ollama` CLI for the dev container. The real Ollama server runs in
+# the `ollama` compose service (or on the host); this talks to it over HTTP so
+# the dev image does not need to carry the multi-GB Ollama runtime.
+#
+#   ollama list | ps | pull <model> | rm <model> | show <model> | run <model> [prompt]
+#   ollama version
+set -euo pipefail
+HOST="${OLLAMA_HOST:-http://ollama:11434}"
+case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
+
+need() { command -v "$1" >/dev/null || { echo "missing $1" >&2; exit 1; }; }
+need curl; need jq
+api() { curl -fsS "$HOST/api/$1" "${@:2}"; }
+table() { awk -F'\t' '{printf "%-44s %-10s %s\n", $1, $2, $3}'; }
+
+usage() { sed -n '2,8p' "$0"; exit "${1:-0}"; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  ""|-h|--help|help) usage 0 ;;
+
+  version|--version|-v)
+    echo "ollama client (HTTP) -> $HOST"; api version | jq -r '"server version " + .version' ;;
+
+  list|ls)
+    api tags | jq -r '["NAME","SIZE","MODIFIED"], (.models[] | [.name, ((.size/1e9*10|round)/10|tostring)+" GB", .modified_at[:19]]) | @tsv' | table ;;
+
+  ps)
+    api ps | jq -r '["NAME","SIZE","UNTIL"], (.models[] | [.name, ((.size/1e9*10|round)/10|tostring)+" GB", .expires_at[:19]]) | @tsv' | table ;;
+
+  pull)
+    [ $# -ge 1 ] || usage 2
+    # one streaming jq turns each progress object into a single printable line
+    api pull -d "$(jq -cn --arg m "$1" '{model:$m}')" \
+      | jq --unbuffered -r 'if .error then "ERROR: " + .error
+          elif (.total // 0) > 0 then "\(.status)  \((.completed // 0) * 100 / .total | floor)%"
+          else .status end' \
+      | while IFS= read -r line; do
+          case "$line" in ERROR:*) echo; echo "$line" >&2; exit 1 ;; esac
+          printf '\r%-60s' "$line"
+        done; echo ;;
+
+  rm|remove|delete)
+    [ $# -ge 1 ] || usage 2
+    for m in "$@"; do api delete -X DELETE -d "$(jq -cn --arg m "$m" '{model:$m}')" && echo "deleted $m"; done ;;
+
+  show)
+    [ $# -ge 1 ] || usage 2
+    api show -d "$(jq -cn --arg m "$1" '{model:$m}')" | jq '{details, parameters, template, capabilities, model_info: (.model_info | with_entries(select(.key | test("context_length|parameter_count|architecture"))))}' ;;
+
+  run)
+    [ $# -ge 1 ] || usage 2
+    model="$1"; shift
+    chat() { # one turn; appends to $HIST
+      local msg="$1"
+      HIST=$(jq -cn --argjson h "$HIST" --arg c "$msg" '$h + [{role:"user",content:$c}]')
+      local reply=""
+      while IFS= read -r line; do
+        local piece; piece=$(jq -r '.message.content // empty' <<<"$line")
+        printf '%s' "$piece"; reply+="$piece"
+        [ "$(jq -r '.error // empty' <<<"$line")" ] && { jq -r .error <<<"$line" >&2; break; }
+      done < <(api chat -d "$(jq -cn --arg m "$model" --argjson h "$HIST" --argjson n "${OLLAMA_NUM_CTX:-32768}" '{model:$m,messages:$h,stream:true,options:{num_ctx:$n}}')")
+      echo
+      HIST=$(jq -cn --argjson h "$HIST" --arg c "$reply" '$h + [{role:"assistant",content:$c}]')
+    }
+    HIST='[]'
+    if [ $# -ge 1 ]; then chat "$*"; exit 0; fi
+    echo "chatting with $model via $HOST (ctrl-d to quit)"
+    while IFS= read -r -e -p '>>> ' input; do [ -n "$input" ] && chat "$input"; done; echo ;;
+
+  serve|start)
+    echo "the server runs in the 'ollama' compose service: docker compose up -d ollama" >&2; exit 1 ;;
+
+  *) echo "unknown command: $cmd" >&2; usage 2 ;;
+esac

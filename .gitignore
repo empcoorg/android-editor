@@ -1,0 +1,23 @@
+# ── Secrets & local config ───────────────────────────────────────────────
+# Never commit real credentials. Copy .env.example -> .env and edit locally.
+.env
+.env.*
+!.env.example
+
+# ── Private device data & personal projects ──────────────────────────────
+# workspace/ is mounted at /workspace in the container and holds your Android
+# projects, device backups (dumpsys, APKs, /data tars), and per-device
+# diagnostic scripts. All private. Keep only the template placeholder tracked.
+workspace/*
+!workspace/.gitkeep
+!workspace/README.md
+
+# ── macOS ────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Rust build output (macos/usbip-share) ────────────────────────────────
+target/
+
+# ── Logs & editor scratch ────────────────────────────────────────────────
+*.log
+*.swp

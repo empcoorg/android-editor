@@ -1,0 +1,17 @@
+[package]
+name = "usbip-share"
+version = "0.2.0"
+edition = "2021"
+description = "Export USB devices on this Mac to the Docker Desktop VM over USB/IP"
+license = "MIT"
+publish = false
+
+[dependencies]
+rusb = { version = "0.9", features = ["vendored"] }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+strip = true
