@@ -17,15 +17,19 @@ attach:           ## shell in the running dev container
 	$(DC) exec dev bash
 dev-down:         ## stop the dev container and the USB sidecar
 	$(DC) stop dev usbip && $(DC) rm -f dev usbip
-RUNPOD_POD_ID ?= your-pod-id
-runpod-up:        ## start the RunPod GPU pod and switch the agent to it (needs runpodctl auth)
+# RunPod pod id. `make` does not read .env, so pull it from there (the runpod-*
+# targets and .env stay in sync). Override by exporting RUNPOD_POD_ID in the env.
+RUNPOD_POD_ID ?= $(shell grep -m1 '^RUNPOD_POD_ID=' .env 2>/dev/null | cut -d= -f2-)
+runpod-up: runpod-require-pod ## start the RunPod GPU pod and switch the agent to it (needs runpodctl auth)
 	runpodctl pod start $(RUNPOD_POD_ID)
 	@sed -i '' 's/^LLM_BACKEND=.*/LLM_BACKEND=runpod/' .env
 	@$(DC) up -d dev && echo "agent -> RunPod. Endpoint warms up in a few minutes; watch with: make runpod-status"
-runpod-down:      ## switch the agent back to local Ollama and STOP the pod (stops billing)
+runpod-down: runpod-require-pod ## switch the agent back to local Ollama and STOP the pod (stops billing)
 	@sed -i '' 's/^LLM_BACKEND=.*/LLM_BACKEND=local/' .env
 	@$(DC) up -d dev
 	runpodctl pod stop $(RUNPOD_POD_ID) && echo "pod stopped; billing paused. Disk kept; restart with make runpod-up"
+runpod-require-pod: # internal: fail clearly if no RunPod pod id is configured
+	@test -n "$(RUNPOD_POD_ID)" || { echo "RUNPOD_POD_ID is not set — add RUNPOD_POD_ID=<podid> to .env"; exit 2; }
 runpod-status:    ## pod state and the backend the agent is using
 	@grep -m1 '^LLM_BACKEND=' .env
 	runpodctl pod get $(RUNPOD_POD_ID) 2>/dev/null || runpodctl pod list
