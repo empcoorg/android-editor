@@ -230,6 +230,14 @@ It reports, then gives a verdict (`LIKELY GENUINE` / `SUSPICIOUS — VERIFY` /
 
 It is a heuristic aid for a human decision, not a guarantee.
 
+The same heuristics ship as an Android app in **`buyer-verifier/`**: run it on
+the candidate phone itself, or scan the candidate over USB-OTG from your own
+phone, to get the same verdict on screen plus a **PDF report** you can hand to
+the merchant. The app also answers whether WhatsApp is approved by the Google
+Play system (Play Store presence, WhatsApp's install source, listing
+reachability) and diffs the seller's claimed specs against what the device
+reports.
+
 ## Rooting a phone
 
 ```bash
@@ -282,6 +290,7 @@ works for scripts written against the old SDK layout. `/app` is a symlink to
 ## Layout
 
 ```
+.github/                        issue forms + pull request template
 Dockerfile                      the image
 docker-compose.yml              dev service
 docker-compose.mac-usb.yml      USB/IP sidecar + USB access (macOS)
@@ -296,5 +305,6 @@ docker/bin/android-full-backup  phone backup before rooting
 docker/bin/android-doctor       tools, models, phones
 docker/bin/android-authenticity-check  spot counterfeit/rebadged phones before buying
 bin/ai-backend            capability-aware local-vs-pod model selection + pod cost control
+buyer-verifier/              Android app: in-store authenticity + Play/WhatsApp check, PDF report
 workspace/                      your projects and backups (mounted at /workspace)
 ```
