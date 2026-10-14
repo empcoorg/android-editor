@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in the dev container, a tool, or a script did not work as expected
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in as much as you can — environment
+        details matter a lot for Docker / USB / phone issues.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Clear description of the failure, including the exact command you ran.
+      placeholder: "make dev-up hangs at …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Smallest set of steps that reliably triggers it.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host environment
+      description: OS and architecture, Docker version.
+      placeholder: "macOS 15.x (Apple silicon), Docker 29.x"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone / device (if relevant)
+      description: Model, Android version, connection type (USB/IP, direct USB).
+      placeholder: "…, Android 14, USB/IP"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Paste the relevant terminal or log output. Redact anything private.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for this problem first.
+        - label: I redacted secrets and private device data from the logs.
