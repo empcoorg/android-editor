@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Buyer Verifier</string>
+    <string name="tagline">In-store authenticity screener · Google Play / WhatsApp approval check</string>
+
+    <string name="header_claims">1. Claimed specifications (from the listing)</string>
+    <string name="hint_ram">RAM in GB, e.g. 12</string>
+    <string name="hint_storage">Storage in GB, e.g. 256</string>
+    <string name="hint_screen">Screen resolution, e.g. 1080x2400</string>
+    <string name="hint_android">Android version, e.g. 15</string>
+    <string name="hint_imei">IMEI from *#06# (optional, checked)</string>
+
+    <string name="header_checks">2. Checks</string>
+    <string name="run_check">Run device check</string>
+    <string name="run_usb">USB-OTG scan (candidate phone over cable)</string>
+    <string name="hint_usb_model">Expected model for USB scan (optional)</string>
+
+    <string name="header_report">3. Report</string>
+    <string name="generate_pdf">Generate PDF</string>
+    <string name="share_pdf">Share</string>
+    <string name="header_preview">Report preview</string>
+
+    <string name="preview_initial">Enter the claimed specifications, then run the device check.\nThe generated report can be saved as a PDF and shared.</string>
+    <string name="run_check_first">Run the device check first.</string>
+    <string name="no_usb_host">USB host (OTG) is not available on this device.</string>
+    <string name="usb_none">No USB devices connected.\nPlug the candidate phone in with an OTG cable and scan again.</string>
+    <string name="usb_denied">USB permission denied — the serial number cannot be read.</string>
+    <string name="pdf_saved">Report saved: %1$s</string>
+    <string name="pdf_subject">Device authenticity and Google Play approval report</string>
+    <string name="share_title">Share report</string>
+</resources>
