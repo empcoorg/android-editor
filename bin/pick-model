@@ -9,6 +9,11 @@
 #                                   write OPENCODE_MODEL / OPENCODE_FALLBACK_MODEL;
 #                                   the default is verified for tool calling first
 #   pick-model set cloud=<m>        write CLOUD_LLM_MODEL (the cloud endpoint's model)
+#   pick-model refresh              fetch ollama.com's library, cache every
+#                                   tool-capable model with its update date, and
+#                                   flag what is new against the catalog
+#   pick-model update [<model>...]  re-pull the chosen models to their latest
+#                                   weights (default: the .env default + reasoner)
 #
 # <m> is a catalog number from `list` or any model name (ollama/... is added
 # for local picks). HOST-side: reads .env, talks to Ollama over HTTP.
@@ -34,6 +39,11 @@ set_env() { # key value
 }
 OLLAMA="$(envv OLLAMA_URL)"; OLLAMA="${OLLAMA:-http://127.0.0.1:11436}"
 OLLAMA="${OLLAMA/host.docker.internal/127.0.0.1}"
+# Discovery cache written by `refresh` (host-side state, never committed).
+CACHE="${HOME}/.android-editor/model-catalog.tsv"
+LIB_URL="https://ollama.com/library"
+# Browser UA: ollama.com rejects default client UAs.
+UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 
 # Catalog: tier | model | download GB | note. Checked against the Ollama
 # library; refresh when newer models land (list shows what is installed).
@@ -82,6 +92,21 @@ cmd_list() {
     if grep -qx "$m" <<<"$have" || grep -qx "$m:latest" <<<"$have"; then status="installed"; else status="-"; fi
     printf '%-3s %-12s %-27s %-8s %-10s %s\n' "$i" "$tier" "$m" "${gb}GB" "$status$mark" "$note"
   done <<<"$CATALOG"
+  if [ -s "$CACHE" ]; then
+    local cfetched fams new
+    cfetched=$(head -1 "$CACHE" | sed 's/^# fetched //')
+    fams=$(printf '%s\n' "$CATALOG" | cut -f2 | cut -d: -f1 | sort -u | tr '\n' ' ')
+    new=$(awk -F'\t' -v fams="$fams" 'BEGIN{split(fams,a," "); for(i in a) seen[a[i]]=1}
+      $2 ~ /tools/ && !seen[$1] && $4 <= 30 {printf "  %-26s %-14s %s\n", $1, $3, $2; if(++n==8) exit}' "$CACHE")
+    if [ -n "$new" ]; then
+      echo
+      echo "New & recent on ollama.com (cache: $cfetched; bin/pick-model refresh to update):"
+      printf '%s\n' "$new"
+    fi
+  else
+    echo
+    echo "Discover new releases: bin/pick-model refresh   (caches ollama.com's library)"
+  fi
   echo
   echo "* = agent default in .env   + = @reasoner in .env"
   echo "Pick with:  bin/pick-model set default=<#|name> [reasoner=<#|name>]"
@@ -160,11 +185,86 @@ cmd_set() {
   echo "      recreate the dev container (make dev-up, or Dev Containers: Reload Window) to regenerate the tool configs"
 }
 
+cmd_refresh() {
+  command -v perl >/dev/null 2>&1 || { echo "refresh: needs perl (ships with stock macOS/Linux)" >&2; return 2; }
+  local tmp parsed fams miss tools_n total_n recent
+  tmp=$(mktemp) || return 2
+  if ! curl -fsS -m 25 -A "$UA" "$LIB_URL" -o "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; echo "refresh: could not fetch $LIB_URL (offline?) — keeping the existing cache" >&2; return 1
+  fi
+  # One chunk per /library/<name> link: name at the start, capability chips and
+  # the "updated N ago" date inside the card.
+  parsed=$(perl -0777 -ne '
+    my %seen;
+    for my $c (split(/href="\/library\//)) {
+      my ($n) = $c =~ /^([a-z0-9._-]+)"/ or next;
+      next if $seen{$n}++;
+      my @caps = $c =~ />(tools|vision|thinking|audio)</g;
+      my ($d) = $c =~ /([0-9]+ (?:day|week|month|year)s?) ago/;
+      my $days = 999999;
+      if (defined $d) { my ($num,$u) = $d =~ /^(\d+) (day|week|month|year)s?$/;
+        my %mul=(day=>1,week=>7,month=>30,year=>365); $days = $num*($mul{$u}//1) if defined $num; }
+      print join("\t", $n, join(",", @caps), $d // "-", $days), "\n";
+    }' "$tmp")
+  rm -f "$tmp"
+  if [ -z "$parsed" ]; then
+    echo "refresh: parsed no models — ollama.com's layout may have changed; keeping the existing cache" >&2; return 1
+  fi
+  mkdir -p "$(dirname "$CACHE")"
+  { echo "# fetched $(date +%F) from ollama.com/library"
+    printf '%s\n' "$parsed" | awk -F'\t' '!s[$1]++' | sort -t"$(printf '\t')" -k4,4n; } > "$CACHE.tmp" && mv "$CACHE.tmp" "$CACHE"
+  total_n=$(grep -cv '^#' "$CACHE"); tools_n=$(awk -F'\t' '$2 ~ /tools/' "$CACHE" | wc -l | tr -d ' ')
+  fams=$(printf '%s\n' "$CATALOG" | cut -f2 | cut -d: -f1 | sort -u | tr '\n' ' ')
+  miss=""
+  for f in $fams; do grep -q "^$f	" "$CACHE" || miss="$miss $f"; done
+  recent=$(awk -F'\t' -v fams="$fams" 'BEGIN{split(fams,a," "); for(i in a) seen[a[i]]=1}
+    $2 ~ /tools/ && !seen[$1] && $4 <= 30 {printf "  %-26s %-14s %s\n", $1, $3, $2; if(++n==15) exit}' "$CACHE")
+  echo "refresh: cached $tools_n tool-capable families ($total_n total) -> $CACHE"
+  if [ -n "$miss" ]; then echo "catalog families NOT found on ollama.com:$miss"; else echo "catalog families: all present on ollama.com"; fi
+  echo
+  echo "Tool-capable and updated in the last 30 days, outside the catalog:"
+  if [ -n "$recent" ]; then printf '%s\n' "$recent"
+  else echo "  (none — the catalog still covers everything recent)"; fi
+  echo
+  echo "vet first: bin/pick-model check <name>   then: bin/pick-model set default=<name>"
+}
+
+cmd_update() {
+  local m line saw rc=0
+  local list=()
+  if [ $# -gt 0 ]; then list=("$@")
+  else
+    m="$(envv OPENCODE_MODEL)"; list+=("${m#ollama/}")
+    m="$(envv OPENCODE_FALLBACK_MODEL)"; list+=("${m#ollama/}")
+  fi
+  for m in "${list[@]}"; do
+    [ -n "$m" ] || continue
+    echo "update: $m"
+    saw=0
+    while IFS= read -r line; do
+      saw=1
+      case "$line" in
+        ERROR:*) echo >&2; echo "  $line" >&2; rc=1; break ;;
+        *) printf '\r%-78s' "$line" ;;
+      esac
+    done < <(curl -sS -m 900 "$OLLAMA/api/pull" -d "$(jq -cn --arg m "$m" '{model:$m}')" 2>/dev/null \
+      | jq --unbuffered -r 'if .error then "ERROR: \(.error)"
+          elif ((.total // 0) > 0) then "\(.status) \((((.completed // 0) * 100) / .total | floor))%"
+          elif .status then .status else empty end')
+    echo
+    if [ "$saw" != 1 ]; then echo "  error: no response from Ollama at $OLLAMA" >&2; rc=1; fi
+  done
+  [ "$rc" = 0 ] && echo "update: done — the latest weights are served from the next request"
+  return $rc
+}
+
 case "${1:-list}" in
   list)    shift; cmd_list "$@" ;;
   check)   shift; cmd_check "$@" ;;
   set)     shift; cmd_set "$@" ;;
-  -h|--help|help) sed -n '2,17p' "$0" ;;
+  refresh) shift; cmd_refresh "$@" ;;
+  update)  shift; cmd_update "$@" ;;
+  -h|--help|help) sed -n '2,22p' "$0" ;;
   *) echo "unknown: $1 (see --help)" >&2; exit 2 ;;
 esac
 
