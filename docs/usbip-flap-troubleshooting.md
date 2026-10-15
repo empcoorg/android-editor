@@ -50,7 +50,7 @@ later), the phone is still physically present and it's a USB/IP re-attach churn.
 
 **If the Mac stops seeing the phone entirely, it's a true physical disconnect:**
 ```
-system_profiler SPUSBDataType | grep -iE 'Mini|MediaTek|0e8d'   # empty = Mac lost it
+system_profiler SPUSBDataType | grep -iE '<device name>|MediaTek|0e8d'   # empty = Mac lost it
 ```
 When that is empty, USB/IP has nothing to forward — reseat firmly, try another
 cable **and** another port (on the phone and the Mac). A "new" cable can still be
