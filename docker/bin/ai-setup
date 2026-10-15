@@ -1,8 +1,9 @@
 #!/bin/bash
 # ai-setup: configure OpenCode for the two local models and make sure Ollama has them.
 #
-#   default model   $OPENCODE_MODEL           (qwen3:14b; must support tool calling)
-#   second opinion  $OPENCODE_FALLBACK_MODEL  (deepseek-r1:14b-qwen-distill-q8_0),
+#   default model   $OPENCODE_MODEL           (qwen3.8:27b; must support tool calling;
+#                   pick your own with bin/pick-model)
+#   second opinion  $OPENCODE_FALLBACK_MODEL  (muse-glimmer:30b),
 #                   a read-only @reasoner subagent the default model is told to
 #                   call after two failures or before risky flashing
 #
@@ -27,8 +28,8 @@ fi
 HOST="${OLLAMA_HOST:-http://host.docker.internal:11436}"
 case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
 CTX="${OLLAMA_NUM_CTX:-32768}"
-DEFAULT="${OPENCODE_MODEL:-ollama/qwen3:14b}"
-FALLBACK="${OPENCODE_FALLBACK_MODEL:-ollama/deepseek-r1:14b-qwen-distill-q8_0}"
+DEFAULT="${OPENCODE_MODEL:-ollama/qwen3.8:27b}"
+FALLBACK="${OPENCODE_FALLBACK_MODEL:-ollama/muse-glimmer:30b}"
 D="${DEFAULT#ollama/}"; F="${FALLBACK#ollama/}"
 CONFIG_ONLY=0
 for a in "$@"; do
