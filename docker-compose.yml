@@ -38,6 +38,12 @@ services:
       # tool calling; the fallback only feeds OpenCode's read-only @reasoner.
       OPENCODE_MODEL: ${OPENCODE_MODEL:-ollama/qwen3:14b}
       LLM_BACKEND: ${LLM_BACKEND:-local}
+      # Cloud endpoint (any OpenAI-compatible provider); RUNPOD_* kept as
+      # legacy aliases read when these are empty.
+      CLOUD_PROVIDER: ${CLOUD_PROVIDER:-}
+      CLOUD_LLM_URL: ${CLOUD_LLM_URL:-}
+      CLOUD_LLM_KEY: ${CLOUD_LLM_KEY:-}
+      CLOUD_LLM_MODEL: ${CLOUD_LLM_MODEL:-}
       RUNPOD_LLM_URL: ${RUNPOD_LLM_URL:-}
       RUNPOD_LLM_KEY: ${RUNPOD_LLM_KEY:-}
       RUNPOD_LLM_MODEL: ${RUNPOD_LLM_MODEL:-}

@@ -85,40 +85,57 @@ All on the Mac's loopback interface; containers reach the Mac as
 | 11436 | Ollama | OpenCode, Cline, Roo Code |
 | 5038 | the container's adb server | tools on the Mac: `adb -P 5038 devices`, scrcpy, Android Studio |
 
-## Remote model on RunPod (optional)
+## Cloud model backend (optional)
 
-The agent model can run on a RunPod GPU instead of locally, while the phone
-stays on local USB. A pod runs vLLM serving an OpenAI-compatible endpoint;
-OpenCode, Cline and Roo point at it. `.env` controls the switch:
-
-```
-LLM_BACKEND=runpod            # or "local" for the Mac's Ollama
-RUNPOD_LLM_URL=https://<podid>-8000.proxy.runpod.net/v1
-RUNPOD_LLM_KEY=sk-...         # protects the vLLM endpoint
-RUNPOD_LLM_MODEL=qwen3-32b
-RUNPOD_POD_ID=<podid>
-RUNPOD_API_KEY=rpa_...        # RunPod account key, for runpodctl (start/stop the pod)
-```
-
-Current pod runs **Qwen3-32B** (bf16) on an RTX PRO 6000 (96 GB). It calls
-tools reliably in auto mode; it spends a few hundred reasoning tokens per step,
-so a step takes ~15-20 s.
-
-**SSH into the pod** (your registered key authenticates automatically):
+The agent model can run on **any OpenAI-compatible cloud endpoint** instead of
+local Ollama, while the phone stays on local USB: a self-hosted vLLM server, a
+GPU instance from any provider (RunPod, Lambda, Vast.ai, Scaleway, ...), or a
+hosted API. Local dev stays the default; the cloud is opt-in for tasks that
+need a bigger model than this machine runs well. `.env` controls the switch:
 
 ```
-ssh $(grep -m1 '^RUNPOD_SSH=' .env | cut -d= -f2-)
-# currently: ssh <podid>-<port>@ssh.runpod.io   (store the full command in RUNPOD_SSH in .env)
+LLM_BACKEND=cloud               # or "local" (the default) for this machine's Ollama
+CLOUD_PROVIDER=runpod           # free-text label shown in status output
+CLOUD_LLM_URL=https://<instance>-8000.proxy.runpod.net/v1
+CLOUD_LLM_KEY=sk-...            # protects the endpoint, not an account key
+CLOUD_LLM_MODEL=qwen3-32b       # whatever the endpoint serves
+CLOUD_INSTANCE_ID=<instance>    # optional; passed to the commands below
+CLOUD_START_CMD='runpodctl pod start $CLOUD_INSTANCE_ID'
+CLOUD_STOP_CMD='runpodctl pod stop $CLOUD_INSTANCE_ID'
+CLOUD_STATUS_CMD='runpodctl pod get $CLOUD_INSTANCE_ID'
+```
+
+The three lifecycle commands are optional. With them, `bin/ai-backend` starts
+the instance on demand and stops it after an idle timeout so billing pauses.
+Without them, flip `LLM_BACKEND` yourself (`make cloud-up` / `cloud-down`
+validate the endpoint config either way) and manage the instance lifetime in
+your provider's console — or with any CLI you like, which is all the `*_CMD`
+hooks are. Older setups using `RUNPOD_LLM_URL` / `RUNPOD_LLM_KEY` /
+`RUNPOD_LLM_MODEL` / `RUNPOD_POD_ID` and `LLM_BACKEND=runpod` keep working
+unchanged.
+
+### Worked example: RunPod for burst GPU
+
+RunPod is one provider that fits the hooks above — useful when a task needs a
+much bigger model than the local machine runs well. A pod runs vLLM serving an
+OpenAI-compatible endpoint; a typical pod runs **Qwen3-32B** (bf16) on a 96 GB
+GPU: it calls tools reliably in auto mode, spends a few hundred reasoning
+tokens per step, so a step takes ~15-20 s.
+
+**SSH into the instance** (your registered key authenticates automatically):
+
+```
+ssh $(grep -m1 '^CLOUD_SSH=' .env | cut -d= -f2-)
+# RunPod form: ssh <podid>-<port>@ssh.runpod.io  (store the full command in CLOUD_SSH in .env)
 ```
 
 RunPod's proxy needs an interactive terminal; for a one-off command use
-`ssh -t <user>@ssh.runpod.io '<cmd>'`. The 65 GB model is cached on a network
-volume (`android-editor-models`, mounted at `/workspace`, `HF_HOME` there), so
-restarts skip the download. The volume costs ~$7/month until deleted.
+`ssh -t <user>@ssh.runpod.io '<cmd>'`. Cache the model on a provider network
+volume mounted at `/workspace` (`HF_HOME` there) so restarts skip the download;
+such volumes typically cost a few dollars a month until deleted.
 
-**Cost control — the pod bills ~$2.49/hr while running.** Stop it when idle.
-
-First authenticate `runpodctl` once (your RunPod API key lives in `.env` as
+**Cost control — a GPU instance bills by the hour while running.** Stop it when
+idle. Authenticate `runpodctl` once (its account key lives in `.env` as
 `RUNPOD_API_KEY`; read it from there so it is never typed or logged):
 
 ```bash
@@ -127,45 +144,48 @@ runpodctl config --apiKey "$(grep -m1 '^RUNPOD_API_KEY=' .env | cut -d= -f2-)"
 # also registers an SSH key at ~/.runpod/ssh/runpodctl-ssh-key for the account
 ```
 
-Then start/stop the pod and flip the agent between backends:
+Then start/stop the instance and flip the agent between backends:
 
 ```bash
-make runpod-status   # which backend the agent uses + live pod state (proves auth works)
-make runpod-down     # switch agent back to local Ollama AND stop the pod (billing pauses, disk kept)
-make runpod-up       # start the pod and switch the agent back to it
+make cloud-status   # which backend the agent uses + live instance state (proves auth works)
+make cloud-down     # switch agent back to local Ollama AND stop the instance (billing pauses, disk kept)
+make cloud-up       # start the instance and switch the agent back to it
 ```
 
-To confirm the agent is really pointed at the GPU, the container's OpenCode
-config (`~/.config/opencode/opencode.json`) lists `runpod` as the provider, and
+To confirm the agent is really pointed at the cloud, the container's OpenCode
+config (`~/.config/opencode/opencode.json`) lists `cloud` as the provider, and
 `curl`ing the endpoint from inside the container returns the served model:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.mac-usb.yml exec dev \
-  curl -fsS https://<podid>-8000.proxy.runpod.net/v1/models -H "Authorization: Bearer $RUNPOD_LLM_KEY"
+  curl -fsS "$CLOUD_LLM_URL/models" -H "Authorization: Bearer $CLOUD_LLM_KEY"
 ```
 
-What you type into the agent leaves the Mac for the RunPod GPU; the phone work
-itself stays entirely local.
+What you type into the agent leaves the machine for the cloud instance; the
+phone work itself stays entirely local.
 
 ### Automatic backend selection
 
-`bin/ai-backend` picks between local Ollama and the RunPod pod by **model
-capability**, and manages the pod to control cost. It runs on the **host**
-(needs `runpodctl`, `docker`, `curl`, `jq`):
+`bin/ai-backend` picks between local Ollama and the cloud endpoint by **model
+capability**, and manages the remote instance to control cost. It runs on the
+**host** (needs `docker`, `curl`, `jq`; a provider CLI only if you use the
+RunPod lifecycle fallback):
 
 ```bash
-make ai-backend            # show backend, models, pod state, idle timer
-make ai-pick TIER=large    # default|large — starts the pod only if a bigger model is needed
-make ai-watch              # idle watcher: stops the pod after IDLE_MINUTES (default 15) of no activity
+make ai-backend            # show backend, models, instance state, idle timer
+make ai-pick TIER=large    # default|large — starts the instance only if a bigger model is needed
+make ai-watch              # idle watcher: stops the instance after IDLE_MINUTES (default 15) of no activity
 make ai-beat               # record activity (resets the idle timer)
+bin/ai-backend start        # switch to cloud explicitly (validates CLOUD_LLM_URL/MODEL first)
 bin/ai-backend recommend "flash boot.img"   # suggest which AI tool fits a task
 ```
 
 Policy: use **local** when it fits the task tier; when a task needs a bigger
-model than local can run well and the pod offers one, **start the pod on
-demand**, then **stop it after the idle timeout** so billing pauses. Tune with
-`IDLE_MINUTES` and `LOCAL_MAX_B` (params/B local is trusted to run well); set
-`AI_BACKEND_DRYRUN=1` to preview a decision without changing anything.
+model than local can run well and the cloud endpoint offers one, **start the
+instance on demand**, then **stop it after the idle timeout** so billing
+pauses. Tune with `IDLE_MINUTES` and `LOCAL_MAX_B` (params/B local is trusted
+to run well); set `AI_BACKEND_DRYRUN=1` to preview a decision without changing
+anything.
 
 The `recommend` subcommand routes by task: terminal/adb/fastboot/flash work →
 **OpenCode** (autonomous), interactive coding → **Cline**, mode-specialized
