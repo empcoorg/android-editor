@@ -37,11 +37,19 @@ writes your picks to `.env`:
 
 ```bash
 bin/pick-model list                       # catalog: tier, size, install status, current picks
+bin/pick-model refresh                    # fetch ollama.com's newest tool-capable models (cached)
 bin/pick-model check qwen3.8:27b          # tool-calling smoke test + measured tok/s
 bin/pick-model set default=5 reasoner=7   # by catalog number, or use model names
+bin/pick-model update                     # re-pull the chosen models to their latest weights
 bin/pick-model set cloud=qwen3-32b        # model behind the optional cloud endpoint
 make models                              # pull anything missing
 ```
+
+`refresh` caches every tool-capable model family from ollama.com with its
+update date (host-side state in `~/.android-editor/`, never committed) and
+`list` surfaces what is new against the shipped catalog — so the template
+keeps up with model releases without edits. Vet new names with
+`pick-model check` before setting them.
 
 Rough tiers (verify fit and speed with `pick-model check`):
 
