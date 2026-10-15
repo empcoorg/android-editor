@@ -29,7 +29,7 @@ if [ "$BACKEND" = cloud ]; then
   CLOUD_KEY="${CLOUD_LLM_KEY:-${RUNPOD_LLM_KEY:-}}"
   CLOUD_ID="${CLOUD_LLM_MODEL:-${RUNPOD_LLM_MODEL:-}}"; [ -n "$CLOUD_ID" ] || { echo "CLOUD_LLM_MODEL unset" >&2; exit 1; }
 fi
-DEFAULT="${OPENCODE_MODEL:-ollama/qwen3:14b}"
+DEFAULT="${OPENCODE_MODEL:-ollama/qwen3.8:27b}"
 # Cline's Plan mode and Roo's architect/debug modes call tools (they read files),
 # so they cannot use a model without tool-calling support. Default them to the
 # main model; VSCODE_PLAN_MODEL overrides.

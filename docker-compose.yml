@@ -36,7 +36,8 @@ services:
       OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32768}
       # Models every AI tool in the container uses. The default must support
       # tool calling; the fallback only feeds OpenCode's read-only @reasoner.
-      OPENCODE_MODEL: ${OPENCODE_MODEL:-ollama/qwen3:14b}
+      # Override both in .env; pick with bin/pick-model.
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-ollama/qwen3.8:27b}
       LLM_BACKEND: ${LLM_BACKEND:-local}
       # Cloud endpoint (any OpenAI-compatible provider); RUNPOD_* kept as
       # legacy aliases read when these are empty.
@@ -47,7 +48,7 @@ services:
       RUNPOD_LLM_URL: ${RUNPOD_LLM_URL:-}
       RUNPOD_LLM_KEY: ${RUNPOD_LLM_KEY:-}
       RUNPOD_LLM_MODEL: ${RUNPOD_LLM_MODEL:-}
-      OPENCODE_FALLBACK_MODEL: ${OPENCODE_FALLBACK_MODEL:-ollama/deepseek-r1:14b-qwen-distill-q8_0}
+      OPENCODE_FALLBACK_MODEL: ${OPENCODE_FALLBACK_MODEL:-ollama/muse-glimmer:30b}
       VSCODE_PLAN_MODEL: ${VSCODE_PLAN_MODEL:-}
       ROO_REASONER_MODES: ${ROO_REASONER_MODES-}
     volumes:
