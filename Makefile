@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 DC = $(COMPOSE) -f docker-compose.yml -f docker-compose.mac-usb.yml
 USBIP_EXCLUDE = $(HOME)/.usbip-share/exclude
 
-.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status cloud-up cloud-down cloud-status runpod-up runpod-down runpod-status ai-backend ai-pick ai-watch ai-beat clean
+.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status cloud-up cloud-down cloud-status runpod-up runpod-down runpod-status ai-backend ai-pick ai-watch ai-beat ai-model clean
 
 help:             ## list targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/' | expand -t 18
@@ -41,6 +41,8 @@ ai-watch:         ## run the idle watcher: stops the instance after IDLE_MINUTES
 	@bin/ai-backend watch
 models:           ## download the two models into the host Ollama if missing
 	$(DC) exec dev ai-setup
+ai-model:         ## list the model catalog: make ai-model CMD='check qwen3.8:27b'
+	@bin/pick-model $(or $(CMD),list)
 doctor:           ## tools, models and attached phones
 	$(DC) exec dev android-doctor
 

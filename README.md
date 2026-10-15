@@ -11,36 +11,68 @@ the container over USB/IP.
 | Shell | wget, curl, git, nano, vim, tmux, htop, rsync, jq, ripgrep, 7z, zstd, lz4, brotli, hexdump, ping and the usual coreutils |
 | AI | OpenCode in the terminal; Cline and Roo Code in VS Code. All use the same two local models. |
 
-## The two models
+## Choosing your models
 
-Served by Ollama on the Mac (Metal-accelerated, `127.0.0.1:11436`), not inside
-Docker:
+All three tools share two models, served by Ollama on the Mac
+(Metal-accelerated, `127.0.0.1:11436`), not inside Docker. Both come from
+`.env` (`OPENCODE_MODEL`, `OPENCODE_FALLBACK_MODEL`); the tool configs are
+regenerated from it whenever the container starts, and `make models`
+downloads whichever is missing.
 
-| Role | Model | Used by |
+### Template defaults (October 2026)
+
+| Role | Model | Download | Used by |
+|---|---|---|---|
+| Default | `qwen3.8:27b` | 18 GB | OpenCode's agent, Cline Act **and Plan**, every Roo Code mode — current top local pick for coding agents (tools, vision, thinking) |
+| Second opinion | `muse-glimmer:30b` | 18 GB | OpenCode's `@reasoner` subagent only, called after two failures or before risky flashing — Meta's open agent model, tuned for tools and failure recovery |
+
+One model is loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`), so both fit in
+turn on a 24 GB Mac alongside Docker.
+
+### Pick your own
+
+`bin/pick-model` (host-side; also `make ai-model`) keeps a catalog of current
+models grouped by machine size, shows what you already have installed, and
+writes your picks to `.env`:
+
+```bash
+bin/pick-model list                       # catalog: tier, size, install status, current picks
+bin/pick-model check qwen3.8:27b          # tool-calling smoke test + measured tok/s
+bin/pick-model set default=5 reasoner=7   # by catalog number, or use model names
+bin/pick-model set cloud=qwen3-32b        # model behind the optional cloud endpoint
+make models                              # pull anything missing
+```
+
+Rough tiers (verify fit and speed with `pick-model check`):
+
+| Machine | Default candidates | Second opinion |
 |---|---|---|
-| Default | `qwen3:14b` (9.3 GB) | OpenCode's agent, Cline Act **and Plan**, every Roo Code mode |
-| Second opinion | `deepseek-r1:14b-qwen-distill-q8_0` (15 GB) | OpenCode's `@reasoner` subagent only, called after two failures or before risky flashing |
+| 8-16 GB | `gemma4:e4b` (~8 GB), `qwen3.5:9b` (7 GB) | `gpt-oss:20b` (12 GB; tight) |
+| 24-32 GB | `qwen3.8:27b` (18 GB), `qwen3.5:27b`, `muse-glimmer:30b`, `qwen3-coder:30b` | `muse-glimmer:30b`, `gpt-oss:20b` |
+| 64 GB+ | `qwen3.5:122b` (81 GB), `nemotron-3.5-lightning:30b` (25 GB) | any of the above |
+
+### The tool-calling rule
 
 **The default model must support tool calling**, or the agents print commands
-instead of running them and nothing happens. Measured here on 2026-10-12:
+instead of running them and nothing happens — Cline's Plan mode included,
+since it reads files. `bin/pick-model check` proves this on your machine
+before you commit, and `pick-model set` refuses to write a non-tool model as
+the default (`--no-check` overrides). `VSCODE_PLAN_MODEL` overrides the
+plan-mode model for the VS Code extensions if you want a different one there.
+
+Measured on this hardware 2026-10-12 (the picks at the time; the catalog
+above has since moved on — measure your own with `pick-model check`):
 
 | Model | Runs commands | Speed |
 |---|---|---|
 | `qwen3:14b` | yes | 17.7 tok/s |
 | `deepseek-r1:14b-qwen-distill-q8_0` | no | 14.9 tok/s |
-| `qwen2.5-coder:32b-instruct-q4_K_M` | no | 0.2 tok/s (only 17.7 of its 24.6 GB fits on this Mac's GPU) |
+| `qwen2.5-coder:32b-instruct-q4_K_M` | no | 0.2 tok/s (only 17.7 of its 24.6 GB fits on a 24 GB Mac's GPU) |
 
-R1 is fine where it sits: the `@reasoner` subagent is read-only by design and
-only returns prose. Anything that reads files or runs commands, Cline's Plan
-mode included, needs the tool-capable default; `VSCODE_PLAN_MODEL` overrides
-that for the VS Code extensions if you want a different one.
-
-Both come from `.env` (`OPENCODE_MODEL`, `OPENCODE_FALLBACK_MODEL`); the tool
-configs are regenerated from it whenever the container starts. `make models`
-downloads whichever is missing.
-
-Both fit comfortably on a 24 GB Mac alongside Docker. A 32B model does not: it
-spills onto the CPU and drops to a fraction of a token per second.
+A model much larger than the machine's memory spills onto the CPU and drops to
+a fraction of a token per second — a smaller model that stays resident beats a
+bigger one that swaps. The second model never needs tool calling: the
+`@reasoner` subagent is read-only by design and only returns prose.
 
 ## Quick start (macOS)
 
@@ -298,12 +330,16 @@ works for scripts written against the old SDK layout. `/app` is a symlink to
 
 | Variable | Default | Effect |
 |---|---|---|
-| `OPENCODE_MODEL` | `ollama/qwen3:14b` | default model for all three tools; must support tool calling |
-| `OPENCODE_FALLBACK_MODEL` | `ollama/deepseek-r1:14b-qwen-distill-q8_0` | OpenCode's `@reasoner` subagent |
+| `OPENCODE_MODEL` | `ollama/qwen3.8:27b` | default model for all three tools; must support tool calling (`bin/pick-model` to pick/verify) |
+| `OPENCODE_FALLBACK_MODEL` | `ollama/muse-glimmer:30b` | OpenCode's `@reasoner` subagent (read-only; no tool calling needed) |
 | `VSCODE_PLAN_MODEL` | (the default model) | Cline Plan mode and the Roo modes in `ROO_REASONER_MODES` |
 | `OLLAMA_URL` | `http://host.docker.internal:11436` | where the tools find Ollama |
 | `OLLAMA_NUM_CTX` | `32768` | context window requested |
 | `ROO_REASONER_MODES` | (empty) | Roo modes that use `VSCODE_PLAN_MODEL` instead of the default |
+| `LLM_BACKEND` | `local` | `local` = Ollama here; `cloud` = the `CLOUD_LLM_*` endpoint |
+| `CLOUD_LLM_URL` / `CLOUD_LLM_KEY` / `CLOUD_LLM_MODEL` | (empty) | the cloud endpoint and its model; any OpenAI-compatible provider |
+| `CLOUD_PROVIDER` | (empty) | free-text label shown by `make cloud-status` (e.g. `runpod`) |
+| `CLOUD_INSTANCE_ID`, `CLOUD_START_CMD`, `CLOUD_STOP_CMD`, `CLOUD_STATUS_CMD` | (empty) | optional instance lifecycle for `bin/ai-backend start|watch|stop` |
 | `INSTALL_NDK` | `0` | `1` adds NDK + CMake (rebuild with `make build`) |
 | `UID` / `GID` | `1000` | container user ids |
 
@@ -324,7 +360,8 @@ docker/bin/vscode-ai-config     Cline + Roo Code config
 docker/bin/android-full-backup  phone backup before rooting
 docker/bin/android-doctor       tools, models, phones
 docker/bin/android-authenticity-check  spot counterfeit/rebadged phones before buying
-bin/ai-backend            capability-aware local-vs-pod model selection + pod cost control
+bin/ai-backend            capability-aware local-vs-cloud model selection + instance cost control
+bin/pick-model            model catalog, tool-calling check, writes picks to .env
 buyer-verifier/              Android app: in-store authenticity + Play/WhatsApp check, PDF report
 workspace/                      your projects and backups (mounted at /workspace)
 ```
