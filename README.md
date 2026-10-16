@@ -1,7 +1,7 @@
 # android-editor
 
 A Docker dev container for **building Android apps** and **rooting Android
-phones**, with a local AI coding agent. On a Mac, phones plugged into USB reach
+phones**, with a local AI coding agent. On macOS, phones plugged into USB reach
 the container over USB/IP.
 
 | Area | In the container |
@@ -13,7 +13,7 @@ the container over USB/IP.
 
 ## Choosing your models
 
-All three tools share two models, served by Ollama on the Mac
+All three tools share two models, served by Ollama on macOS
 (Metal-accelerated, `127.0.0.1:11436`), not inside Docker. Both come from
 `.env` (`OPENCODE_MODEL`, `OPENCODE_FALLBACK_MODEL`); the tool configs are
 regenerated from it whenever the container starts, and `make models`
@@ -88,7 +88,7 @@ bigger one that swaps. The second model never needs tool calling: the
 brew install ollama rust          # once: model server, and the toolchain for the USB/IP server
 cp .env.example .env              # once
 make build                        # once, ~20 minutes
-make dev-up                       # starts the Mac-side services, then the container
+make dev-up                       # starts the macOS-side services, then the container
 make models                       # once: downloads the two models (~36 GB)
 make attach                       # a shell in the container
 ```
@@ -102,7 +102,7 @@ starts the agent in the current directory. Your projects live in
 Open this folder in VS Code (with the *Dev Containers* extension) and run
 **Dev Containers: Reopen in Container**. That:
 
-1. runs `macos/host-services.sh` on the Mac, starting the USB/IP server and
+1. runs `macos/host-services.sh` on macOS, starting the USB/IP server and
    Ollama if they are not running;
 2. starts or reuses the same `android-editor-dev-1` container `make attach` uses;
 3. installs Cline and Roo Code inside it, so they and the integrated terminal
@@ -116,14 +116,14 @@ dev-down` stops it.
 
 ### Ports
 
-All on the Mac's loopback interface; containers reach the Mac as
+All on the macOS loopback interface; containers reach the host as
 `host.docker.internal`.
 
 | Port | Service | Used by |
 |---|---|---|
 | 3240 | USB/IP server | the `usbip` sidecar, which imports phones into the Docker VM |
 | 11436 | Ollama | OpenCode, Cline, Roo Code |
-| 5038 | the container's adb server | tools on the Mac: `adb -P 5038 devices`, scrcpy, Android Studio |
+| 5038 | the container's adb server | tools on macOS: `adb -P 5038 devices`, scrcpy, Android Studio |
 
 ## Cloud model backend (optional)
 
@@ -237,13 +237,13 @@ an automatic switch.
 
 Docker Desktop cannot pass USB devices to containers, but its VM kernel has the
 USB/IP client built in. `macos/usbip-share` (Rust, built on first run) is the
-USB/IP server on the Mac; it exports phones by vendor id, and the `usbip`
+USB/IP server on macOS; it exports phones by vendor id, and the `usbip`
 sidecar imports them into the VM. Mode changes (adb ↔ fastboot ↔ BROM) are
 picked up within two seconds.
 
 - **One owner at a time.** A USB interface can be claimed by the Mac or the
-  container, not both. The Mac's own adb server grabs any adb-mode phone it
-  sees; `adb kill-server` on the Mac frees it.
+  container, not both. macOS's own adb server grabs any adb-mode phone it
+  sees; `adb kill-server` on macOS frees it.
 - **Leaving a phone to the Mac:** `make usb-release DEV=<serial>`, and
   `make usb-reclaim DEV=<serial>` to take it back. `make usb-status` lists
   what is released.
@@ -251,7 +251,7 @@ picked up within two seconds.
   Qualcomm EDL use vendor-specific USB classes that macOS does not claim, so
   they should pass through too; untested.
 - **MediaTek BROM/preloader does not:** macOS's own serial driver claims those
-  modes first, so run mtkclient natively on the Mac for BROM work
+  modes first, so run mtkclient natively on macOS for BROM work
   (`git clone https://github.com/bkerler/mtkclient && pip install ./mtkclient`).
 - **Linux hosts** need no USB/IP: use `docker-compose.linux-usb.yml` instead of
   `docker-compose.mac-usb.yml`.
@@ -360,8 +360,8 @@ docker-compose.yml              dev service
 docker-compose.mac-usb.yml      USB/IP sidecar + USB access (macOS)
 docker-compose.linux-usb.yml    direct USB passthrough (Linux)
 .devcontainer/                  VS Code Dev Container (Cline, Roo Code)
-macos/host-services.sh          starts the USB/IP server and Ollama on the Mac
-macos/usbip-share/              USB/IP server for the Mac (Rust, libusb)
+macos/host-services.sh          starts the USB/IP server and Ollama on macOS
+macos/usbip-share/              USB/IP server for macOS (Rust, libusb)
 docker/usbip-client/            sidecar that imports phones into the Docker VM
 docker/bin/ai-setup             OpenCode config + model download
 docker/bin/vscode-ai-config     Cline + Roo Code config

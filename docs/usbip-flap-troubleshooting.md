@@ -8,13 +8,13 @@ incrementing (`023` → `024`).
 
 ## Ruling out a hijacker (do this first)
 Check whether two adb servers or the Mac are fighting over the phone:
-- Mac host adb: `adb devices` (may be absent entirely on a Mac-only setup).
+- macOS host adb: `adb devices` (may be absent entirely on a macOS-only setup).
 - Release list: `cat ~/.usbip-share/exclude` (empty = nothing released to the Mac).
 - Container adb servers: `pgrep -af adb` (should be exactly one).
 - If only one owner and the release list is empty, it is **not** contention.
 
 ## Root cause (confirmed via the usbip-share server log)
-The Mac-side server logs to its scratchpad file (find it with
+The macOS-side server logs to its scratchpad file (find it with
 `lsof -p $(pgrep -f usbip-share) | grep usbip-share.log`). The tell-tale:
 ```
 … ep 0x01 IN len 512 -> status -5 actual 0   # USB I/O error
@@ -48,9 +48,9 @@ The `usbip-share` server log error codes tell you which:
 If the drop self-heals (server logs `exported … as bus id` again a few seconds
 later), the phone is still physically present and it's a USB/IP re-attach churn.
 
-**If the Mac stops seeing the phone entirely, it's a true physical disconnect:**
+**If macOS stops seeing the phone entirely, it's a true physical disconnect:**
 ```
-system_profiler SPUSBDataType | grep -iE '<device name>|MediaTek|0e8d'   # empty = Mac lost it
+system_profiler SPUSBDataType | grep -iE '<device name>|MediaTek|0e8d'   # empty = macOS lost it
 ```
 When that is empty, USB/IP has nothing to forward — reseat firmly, try another
 cable **and** another port (on the phone and the Mac). A "new" cable can still be
