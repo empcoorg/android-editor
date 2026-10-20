@@ -100,6 +100,33 @@ log "  $(ls "$OUT/apks" | wc -l | tr -d ' ') packages, $(du -sh "$OUT/apks" | cu
 # whole image is checked against the device's own sha256; verified images are
 # skipped on re-runs.
 BS=4194304; CHUNK_BLOCKS=64
+# A phone->Mac transfer over adb can wedge mid-stream: on Wi-Fi a brief link blip
+# (a roam, a background scan, jitter) half-opens the socket, so dd's bytes stop
+# arriving but `exec-out` never errors and blocks forever -- and the retry/wait
+# loop below only runs *between* chunks, so it never gets to fire. pull_stream
+# guards a transfer by killing it once its output has not grown for STALL_SECS,
+# so the retry loop can reset the link and re-pull. (macOS has no `timeout`.)
+STALL_SECS=${STALL_SECS:-45}
+is_tcp() { case "$SERIAL" in *:*) return 0 ;; *) return 1 ;; esac; }
+reset_transport() { # clear a wedged adb transport before retrying
+  if is_tcp; then "$ADB" disconnect "$SERIAL" >/dev/null 2>&1; "$ADB" connect "$SERIAL" >/dev/null 2>&1
+  else "$ADB" reconnect >/dev/null 2>&1 || true; fi
+}
+pull_stream() { # out-file  exec-out-arg  ->  0 ok, 124 stalled & killed, else exec-out rc
+  local out=$1 arg=$2 pid last=0 stall=0 cur
+  "$ADB" -s "$SERIAL" exec-out "$arg" > "$out" 2>/dev/null </dev/null &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    cur=$( (wc -c < "$out" 2>/dev/null || echo 0) | tr -d ' ' ); cur=${cur:-0}
+    if [ "$cur" -gt "$last" ]; then last=$cur; stall=0
+    else
+      stall=$((stall + 5))
+      [ "$stall" -ge "$STALL_SECS" ] && { kill -TERM "$pid" 2>/dev/null; sleep 1; kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 124; }
+    fi
+  done
+  wait "$pid" 2>/dev/null
+}
 wait_for_device() {
   local n=0
   while [ "$(a get-state 2>/dev/null | tr -d '\r')" != device ]; do
@@ -124,17 +151,20 @@ dump_partition() { # name dev size -> 0 on success
       log "  chunk $((part + 1))/$nparts of $name already on disk"
       i=$((i + count)); part=$((part + 1)); continue
     fi
-    local try=0 ok=0 t0 t1
+    local try=0 ok=0 t0 t1 prc
     while [ $try -lt 5 ]; do
       wait_for_device || return 1
-      t0=$(date +%s)
-      a exec-out "su -c 'dd if=$dev bs=$BS skip=$i count=$count 2>/dev/null'" > "$f.raw" 2>/dev/null || true
+      t0=$(date +%s); prc=0
+      pull_stream "$f.raw" "su -c 'dd if=$dev bs=$BS skip=$i count=$count 2>/dev/null'" || prc=$?
       t1=$(date +%s)
-      if [ "$(wc -c < "$f.raw" | tr -d ' ')" = "$expect" ] && gzip -1 -c "$f.raw" > "$f"; then
+      if [ "$prc" = 0 ] && [ "$(wc -c < "$f.raw" | tr -d ' ')" = "$expect" ] && gzip -1 -c "$f.raw" > "$f"; then
         rm -f "$f.raw"; ok=1; break
       fi
       rm -f "$f.raw" "$f"
-      try=$((try + 1)); log "  chunk $((part + 1))/$nparts of $name came back short (try $try)"; sleep 3
+      try=$((try + 1))
+      if [ "$prc" = 124 ]; then log "  chunk $((part + 1))/$nparts of $name stalled; resetting link (try $try)"; reset_transport
+      else log "  chunk $((part + 1))/$nparts of $name came back short (try $try)"; fi
+      sleep 3
     done
     [ $ok = 1 ] || { log "  !! giving up on $name after 5 tries"; rm -rf "$tmpd"; return 1; }
     [ $nparts -gt 1 ] && log "  chunk $((part + 1))/$nparts of $name ok ($(( expect / 1048576 )) MB in $(( t1 - t0 + 1 ))s)"
@@ -183,11 +213,14 @@ if [ $ROOT = 1 ]; then
   log "archiving /data (app data, accounts, Magisk; excluding media and dalvik-cache; flags: ${xflags:-none})"
   for try in 1 2 3; do
     wait_for_device || break
-    a exec-out "su -c 'cd /data && toybox tar -cz $xflags --exclude=./media --exclude=./dalvik-cache --exclude=./cache -f - . 2>/dev/null'" > "$OUT/data.tar.gz" || true
-    if gzip -t "$OUT/data.tar.gz" 2>/dev/null; then
+    dprc=0
+    pull_stream "$OUT/data.tar.gz" "su -c 'cd /data && toybox tar -cz $xflags --exclude=./media --exclude=./dalvik-cache --exclude=./cache -f - . 2>/dev/null'" || dprc=$?
+    if [ "$dprc" = 0 ] && gzip -t "$OUT/data.tar.gz" 2>/dev/null; then
       log "  ok, $(du -sh "$OUT/data.tar.gz" | cut -f1), $(gunzip -c "$OUT/data.tar.gz" | tar -tf - 2>/dev/null | wc -l | tr -d ' ') entries"; break
     fi
-    log "  data.tar.gz came back truncated (try $try)"; sleep 3
+    if [ "$dprc" = 124 ]; then log "  /data archive stalled; resetting link (try $try)"; reset_transport
+    else log "  data.tar.gz came back truncated (try $try)"; fi
+    sleep 3
   done
 else
   # ---------------------------------------------------------------- fallback: adb backup
