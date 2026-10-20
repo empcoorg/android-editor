@@ -56,9 +56,14 @@ BUILD=$(mktemp -d); trap 'rm -rf "$BUILD"' EXIT
 [ -f "$BUILD/local.properties" ] || { [ -n "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" ] && echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > "$BUILD/local.properties"; }
 ASSETS="$BUILD/app/src/main/assets"; rm -f "$ASSETS/contents.json"; mkdir -p "$ASSETS/$ID"
 
-webp() { # src dst dim maxkb
-  magick "$1[0]" -resize "${3}x${3}" -background none -gravity center -extent "${3}x${3}" \
-    -define webp:target-size=$(( $4 * 1000 )) -define webp:method=6 "$2" 2>/dev/null
+webp() { # src dst dim maxkb -> encodes a 512x512 (or tray) WebP guaranteed <= maxkb
+  local max=$(( $4 * 1000 )) q
+  for q in 90 80 70 60 50 40 30 20; do
+    magick "$1[0]" -resize "${3}x${3}" -background none -gravity center -extent "${3}x${3}" \
+      -quality "$q" -define webp:method=6 "$2" 2>/dev/null || true
+    [ -f "$2" ] && [ "$(wc -c < "$2")" -le "$max" ] && return 0
+  done   # keep the smallest (q=20) if a very busy image still won't fit
+  return 0
 }
 echo "converting $n image(s) -> 512x512 WebP ..."
 i=0; files=()
