@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# android-integrity-fix: get Play-Integrity-gated / anti-tamper apps (messengers,
-# banking, wallets) past their "unofficial app" / "can't verify device" wall on a
+# android-integrity-fix: get Play-Integrity-gated / anti-tamper apps (e.g.
+# messengers) past their "unofficial app" / "can't verify device" wall on a
 # Magisk-ROOTED device, by enabling the Magisk hiding stack the correct way.
 #
 #   android-integrity-fix -s SERIAL [--check] [--reboot] [--verify] APP [APP...]

@@ -1,7 +1,7 @@
 # Getting apps past the "unofficial app" / integrity wall on a rooted phone
 
-Some apps — messengers (WhatsApp and the like), banking, wallets, some games —
-refuse to run or to finish sign-up on a rooted device. Two different defences are
+Some apps — messengers (WhatsApp and the like), some games, and others that
+enforce device integrity — refuse to run or to finish sign-up on a rooted device. Two different defences are
 at work, and they fail in two different places:
 
 | Where you see it | Defence | What trips it |
