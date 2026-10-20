@@ -2,6 +2,15 @@
 
 Example case: `alps` MediaTek reference board, Android 12, Magisk 30.7.
 
+> **Update (later session):** TrickyStore + `keybox.xml` was subsequently
+> deployed on this class of board. The practical top cause of apps failing here
+> turned out to be **Zygisk silently switched off** by a Magisk app repair/update
+> — which disables PlayIntegrityFix, the DenyList and Shamiko all at once. With
+> Zygisk back on and the DenyList hiding the app, the launch-time tamper wall
+> clears and the Play Integrity attestation actually runs; the hardware *verdict*
+> can still cap at BASIC as analysed below. Step-by-step procedure and the
+> `android-integrity-fix` tool: [app-integrity-rooted-fix.md](app-integrity-rooted-fix.md).
+
 ## Goal
 Restore `MEETS_DEVICE_INTEGRITY` for WhatsApp after rooting.
 
