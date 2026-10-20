@@ -84,6 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip zip p7zip-full xz-utils zstd lz4 bzip2 brotli gzip tar cpio \
       # editors, shell comforts, inspection
       nano vim less tmux htop rsync jq ripgrep file tree diffutils patch \
+      imagemagick webp \
       bsdextrautils bc coreutils findutils procps iproute2 iputils-ping \
       netcat-openbsd openssh-client ca-certificates \
       python3 openjdk-17-jdk-headless openjdk-11-jdk-headless maven fonts-dejavu-core \

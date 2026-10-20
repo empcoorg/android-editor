@@ -7,7 +7,7 @@ the container over USB/IP.
 | Area | In the container |
 |---|---|
 | Build apps | OpenJDK 17 and 11, Maven, Android SDK (cmdline-tools, platform-tools, build-tools 36 and 33.0.2, platforms 36 and 33), Gradle 8.14 as `gradle` and Gradle 7.5.1 as `gradle7`. Gradle downloads any other SDK version a project asks for. NDK optional (`INSTALL_NDK=1`). |
-| Root phones | adb, fastboot, Magisk APK (`$MAGISK_APK`) + `magiskboot`, payload-dumper-go, mkbootimg / unpack_bootimg / repack_bootimg, avbtool, simg2img / img2simg, lpunpack / lpmake / lpdump (super.img), sdat2img, ext4 / EROFS / F2FS tools, binwalk, dtc, mtkclient (`mtk`, MediaTek), edl (Qualcomm), heimdall (Samsung), `android-full-backup` |
+| Root phones | adb, fastboot, Magisk APK (`$MAGISK_APK`) + `magiskboot`, payload-dumper-go, mkbootimg / unpack_bootimg / repack_bootimg, avbtool, simg2img / img2simg, lpunpack / lpmake / lpdump (super.img), sdat2img, ext4 / EROFS / F2FS tools, binwalk, dtc, mtkclient (`mtk`, MediaTek), edl (Qualcomm), heimdall (Samsung), `android-full-backup`, `wa-sticker-pack` |
 | Shell | wget, curl, git, nano, vim, tmux, htop, rsync, jq, ripgrep, 7z, zstd, lz4, brotli, hexdump, ping and the usual coreutils |
 | AI | OpenCode in the terminal; Cline and Roo Code in VS Code. All use the same two local models. |
 
@@ -295,6 +295,7 @@ docker/bin/vscode-ai-config     Cline + Roo Code config
 docker/bin/android-full-backup  phone backup before rooting
 docker/bin/android-doctor       tools, models, phones
 docker/bin/android-authenticity-check  spot counterfeit/rebadged phones before buying
+docker/bin/wa-sticker-pack      build a WhatsApp sticker-pack APK so stickers survive a re-flash
 bin/ai-backend            capability-aware local-vs-pod model selection + pod cost control
 workspace/                      your projects and backups (mounted at /workspace)
 ```
