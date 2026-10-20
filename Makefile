@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 DC = $(COMPOSE) -f docker-compose.yml -f docker-compose.mac-usb.yml
 USBIP_EXCLUDE = $(HOME)/.usbip-share/exclude
 
-.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status runpod-up runpod-down runpod-status ai-backend ai-pick ai-watch ai-beat clean
+.PHONY: help build host-services dev-up attach dev-down models doctor usb-release usb-reclaim usb-status cloud-up cloud-down cloud-status runpod-up runpod-down runpod-status ai-backend ai-pick ai-watch ai-beat ai-model clean
 
 help:             ## list targets
 	@grep -E '^[a-z-]+:.*## ' Makefile | sed 's/:.*## /\t/' | expand -t 18
@@ -17,33 +17,32 @@ attach:           ## shell in the running dev container
 	$(DC) exec dev bash
 dev-down:         ## stop the dev container and the USB sidecar
 	$(DC) stop dev usbip && $(DC) rm -f dev usbip
-# RunPod pod id. `make` does not read .env, so pull it from there (the runpod-*
-# targets and .env stay in sync). Override by exporting RUNPOD_POD_ID in the env.
-RUNPOD_POD_ID ?= $(shell grep -m1 '^RUNPOD_POD_ID=' .env 2>/dev/null | cut -d= -f2-)
-runpod-up: runpod-require-pod ## start the RunPod GPU pod and switch the agent to it (needs runpodctl auth)
-	runpodctl pod start $(RUNPOD_POD_ID)
-	@sed -i '' 's/^LLM_BACKEND=.*/LLM_BACKEND=runpod/' .env
-	@$(DC) up -d dev && echo "agent -> RunPod. Endpoint warms up in a few minutes; watch with: make runpod-status"
-runpod-down: runpod-require-pod ## switch the agent back to local Ollama and STOP the pod (stops billing)
-	@sed -i '' 's/^LLM_BACKEND=.*/LLM_BACKEND=local/' .env
-	@$(DC) up -d dev
-	runpodctl pod stop $(RUNPOD_POD_ID) && echo "pod stopped; billing paused. Disk kept; restart with make runpod-up"
-runpod-require-pod: # internal: fail clearly if no RunPod pod id is configured
-	@test -n "$(RUNPOD_POD_ID)" || { echo "RUNPOD_POD_ID is not set — add RUNPOD_POD_ID=<podid> to .env"; exit 2; }
-runpod-status:    ## pod state and the backend the agent is using
-	@grep -m1 '^LLM_BACKEND=' .env
-	runpodctl pod get $(RUNPOD_POD_ID) 2>/dev/null || runpodctl pod list
-# Capability-aware backend selection: local Ollama vs the RunPod GPU pod.
-ai-backend:       ## show backend, models, pod state and idle timer
+# Cloud backend: local Ollama vs any OpenAI-compatible remote endpoint.
+# Lifecycle comes from CLOUD_*_CMD in .env; the built-in runpodctl fallback
+# covers the RunPod example out of the box, any other provider plugs in via
+# the same hooks (or manage instances in your provider's console).
+cloud-up:        ## switch the agent to the cloud backend (starts the instance if lifecycle is configured)
+	@bin/ai-backend start
+cloud-down:      ## switch back to local Ollama and stop the cloud instance (billing pauses)
+	@bin/ai-backend stop
+cloud-status:    ## which backend the agent uses + cloud instance state
+	@bin/ai-backend status
+runpod-up: cloud-up        # backwards-compatible alias (RunPod example)
+runpod-down: cloud-down
+runpod-status: cloud-status
+# Capability-aware backend selection: local Ollama vs the cloud endpoint.
+ai-backend:       ## show backend, models, instance state and idle timer
 	@bin/ai-backend status
 ai-pick:          ## choose backend for a task tier: make ai-pick TIER=large (default|large)
 	@bin/ai-backend pick $(or $(TIER),default)
-ai-beat:          ## record AI activity (resets the pod idle timer)
+ai-beat:          ## record AI activity (resets the instance idle timer)
 	@bin/ai-backend beat
-ai-watch:         ## run the idle watcher: stops the pod after IDLE_MINUTES idle
+ai-watch:         ## run the idle watcher: stops the instance after IDLE_MINUTES idle
 	@bin/ai-backend watch
 models:           ## download the two models into the host Ollama if missing
 	$(DC) exec dev ai-setup
+ai-model:         ## list the model catalog: make ai-model CMD='check qwen3.8:27b'
+	@bin/pick-model $(or $(CMD),list)
 doctor:           ## tools, models and attached phones
 	$(DC) exec dev android-doctor
 

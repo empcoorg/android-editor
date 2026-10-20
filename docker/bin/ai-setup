@@ -1,8 +1,9 @@
 #!/bin/bash
 # ai-setup: configure OpenCode for the two local models and make sure Ollama has them.
 #
-#   default model   $OPENCODE_MODEL           (qwen3:14b; must support tool calling)
-#   second opinion  $OPENCODE_FALLBACK_MODEL  (deepseek-r1:14b-qwen-distill-q8_0),
+#   default model   $OPENCODE_MODEL           (qwen3.8:27b; must support tool calling;
+#                   pick your own with bin/pick-model)
+#   second opinion  $OPENCODE_FALLBACK_MODEL  (muse-glimmer:30b),
 #                   a read-only @reasoner subagent the default model is told to
 #                   call after two failures or before risky flashing
 #
@@ -13,15 +14,22 @@
 # every container start, so edit .env rather than opencode.json.
 set -euo pipefail
 
-# Backend: "local" uses the Mac's Ollama; "runpod" uses a remote OpenAI-compatible
-# endpoint (the RunPod vLLM pod). Set by .env (LLM_BACKEND, RUNPOD_LLM_*).
+# Backend: "local" uses Ollama on this machine; "cloud" uses a remote
+# OpenAI-compatible endpoint (any provider) set in .env (LLM_BACKEND,
+# CLOUD_LLM_*). Legacy "runpod" / RUNPOD_LLM_* are accepted as aliases.
 BACKEND="${LLM_BACKEND:-local}"
-RP_URL="${RUNPOD_LLM_URL:-}"; RP_KEY="${RUNPOD_LLM_KEY:-}"; RP_MODEL="${RUNPOD_LLM_MODEL:-}"
+[ "$BACKEND" = runpod ] && BACKEND=cloud
+CLOUD_URL="${CLOUD_LLM_URL:-${RUNPOD_LLM_URL:-}}"; CLOUD_KEY="${CLOUD_LLM_KEY:-${RUNPOD_LLM_KEY:-}}"; CLOUD_MODEL="${CLOUD_LLM_MODEL:-${RUNPOD_LLM_MODEL:-}}"
+PROVIDER="${CLOUD_PROVIDER:-}"
+if [ -z "$PROVIDER" ]; then
+  # Legacy RUNPOD_LLM_* configs keep the runpod label.
+  if [ -n "${RUNPOD_LLM_URL:-}" ]; then PROVIDER=runpod; else PROVIDER=cloud; fi
+fi
 HOST="${OLLAMA_HOST:-http://host.docker.internal:11436}"
 case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
 CTX="${OLLAMA_NUM_CTX:-32768}"
-DEFAULT="${OPENCODE_MODEL:-ollama/qwen3:14b}"
-FALLBACK="${OPENCODE_FALLBACK_MODEL:-ollama/deepseek-r1:14b-qwen-distill-q8_0}"
+DEFAULT="${OPENCODE_MODEL:-ollama/qwen3.8:27b}"
+FALLBACK="${OPENCODE_FALLBACK_MODEL:-ollama/muse-glimmer:30b}"
 D="${DEFAULT#ollama/}"; F="${FALLBACK#ollama/}"
 CONFIG_ONLY=0
 for a in "$@"; do
@@ -38,33 +46,34 @@ done
 # /dev/bus/usb. Without that, `opencode run` auto-rejects every command.
 DIR="$HOME/.config/opencode"; mkdir -p "$DIR"
 
-if [ "$BACKEND" = runpod ]; then
-  if [ -z "$RP_URL" ] || [ -z "$RP_MODEL" ]; then
-    echo "LLM_BACKEND=runpod but RUNPOD_LLM_URL/RUNPOD_LLM_MODEL are unset" >&2; exit 1
+if [ "$BACKEND" = cloud ]; then
+  if [ -z "$CLOUD_URL" ] || [ -z "$CLOUD_MODEL" ]; then
+    echo "LLM_BACKEND=cloud but CLOUD_LLM_URL/CLOUD_LLM_MODEL are unset (legacy RUNPOD_LLM_* still accepted)" >&2; exit 1
   fi
-  # Remote vLLM on RunPod, OpenAI-compatible. One model, so it is both the main
-  # agent and the @reasoner.
-  jq -n --arg url "$RP_URL" --arg key "$RP_KEY" --arg m "$RP_MODEL" '{
+  PROVIDER="${PROVIDER:-cloud}"
+  # Remote OpenAI-compatible endpoint (vLLM or any chat-completions server). One
+  # model, so it is both the main agent and the @reasoner.
+  jq -n --arg url "$CLOUD_URL" --arg key "$CLOUD_KEY" --arg m "$CLOUD_MODEL" --arg p "$PROVIDER" '{
     "$schema": "https://opencode.ai/config.json",
-    enabled_providers: ["runpod"],
-    provider: { runpod: {
+    enabled_providers: ["cloud"],
+    provider: { cloud: {
       npm: "@ai-sdk/openai-compatible",
-      name: "RunPod vLLM",
+      name: ($p + " cloud endpoint"),
       options: ({ baseURL: $url } + (if $key != "" then { apiKey: $key } else {} end)),
-      models: { ($m): { name: ($m + " (RunPod GPU)"), limit: { context: 32768, output: 8192 } } }
+      models: { ($m): { name: ($m + " (" + $p + ")"), limit: { context: 32768, output: 8192 } } }
     } },
-    model: ("runpod/" + $m),
-    small_model: ("runpod/" + $m),
+    model: ("cloud/" + $m),
+    small_model: ("cloud/" + $m),
     agent: { reasoner: {
       description: "Second opinion. Call it when you are stuck: a command or build failed twice, an error makes no sense, or before any step that writes to a phone that you are not sure is safe. It cannot run commands or edit files.",
-      mode: "subagent", model: ("runpod/" + $m), temperature: 0.6,
+      mode: "subagent", model: ("cloud/" + $m), temperature: 0.6,
       permission: { edit: "deny", bash: "deny", webfetch: "deny" },
       prompt: "You are a careful senior engineer acting as a second opinion for a coding agent that builds Android apps and roots Android phones. You cannot run commands. Identify the most likely root cause from the evidence, say what would confirm it, and end with a short numbered plan. Flag any step that could brick a device or lose data."
     } },
     permission: { bash: "allow", external_directory: "allow" },
     autoupdate: false, share: "disabled"
   }' > "$DIR/opencode.json"
-  echo "opencode: RunPod $RP_MODEL at $RP_URL"
+  echo "opencode: cloud $CLOUD_MODEL via $PROVIDER at $CLOUD_URL"
 else
 # bash + external_directory are allowed: this container exists to run adb,
 # fastboot and the firmware tools, which live outside /workspace and touch
@@ -134,8 +143,11 @@ remain responsible for the final decision; if its plan looks wrong, say so.
   must be unlocked first.
 RULES
 
-echo "opencode: default $D, @reasoner $F (Ollama at $HOST)"
+if [ "$BACKEND" = local ]; then echo "opencode: default $D, @reasoner $F (Ollama at $HOST)"; fi
 [ "$CONFIG_ONLY" = 1 ] && exit 0
+# With the cloud backend there is nothing to pull into Ollama; `make models`
+# still works explicitly when the local backend is wanted again.
+[ "$BACKEND" = local ] || exit 0
 
 if ! curl -fsS -m 5 "$HOST/api/version" >/dev/null 2>&1; then
   echo "ollama is not reachable at $HOST; on a Mac run: bash macos/host-services.sh" >&2

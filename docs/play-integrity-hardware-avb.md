@@ -1,4 +1,15 @@
-# Play Integrity on Example Phone (alps MediaTek, Android 12, Magisk 30.7)
+# Play Integrity on a rooted board with hardware AVB attestation (MediaTek example)
+
+Example case: `alps` MediaTek reference board, Android 12, Magisk 30.7.
+
+> **Update (later session):** TrickyStore + `keybox.xml` was subsequently
+> deployed on this class of board. The practical top cause of apps failing here
+> turned out to be **Zygisk silently switched off** by a Magisk app repair/update
+> — which disables PlayIntegrityFix, the DenyList and Shamiko all at once. With
+> Zygisk back on and the DenyList hiding the app, the launch-time tamper wall
+> clears and the Play Integrity attestation actually runs; the hardware *verdict*
+> can still cap at BASIC as analysed below. Step-by-step procedure and the
+> `android-integrity-fix` tool: [app-integrity-rooted-fix.md](app-integrity-rooted-fix.md).
 
 ## Goal
 Restore `MEETS_DEVICE_INTEGRITY` for WhatsApp after rooting.
@@ -9,7 +20,7 @@ Restore `MEETS_DEVICE_INTEGRITY` for WhatsApp after rooting.
 - **autopif4** generated a valid Pixel 8a profile → `custom.pif.prop`.
 - **real_fingerprint** module restores the true Android 12 fingerprint (vendor ROM
   shipped a fake Android 6 one).
-- PIF build spoof **confirmed in logcat**: `Example Phone -> Pixel 8a`, model/fingerprint/
+- PIF build spoof **confirmed in logcat**: `<device model> -> Pixel 8a`, model/fingerprint/
   security-patch/api_level all successfully spoofed at the DroidGuard API layer.
 
 ## Result: still `MEETS_BASIC_INTEGRITY` — root cause identified

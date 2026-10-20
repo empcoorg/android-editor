@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# android-integrity-fix: get Play-Integrity-gated / anti-tamper apps (e.g.
+# messengers) past their "unofficial app" / "can't verify device" wall on a
+# Magisk-ROOTED device, by enabling the Magisk hiding stack the correct way.
+#
+#   android-integrity-fix -s SERIAL [--check] [--reboot] [--verify] APP [APP...]
+#
+# What it does (apply mode, the default):
+#   1. Enables Zygisk if it is off. THIS IS THE MOST COMMON SILENT FAILURE: a
+#      Magisk app update, repair or reinstall resets Zygisk to OFF, which at a
+#      stroke disables PlayIntegrityFix, the DenyList and Shamiko -- the apps
+#      start failing again even though "the modules are all still installed".
+#      Zygisk only activates on a reboot.
+#   2. Sets DenyList enforcement correctly: ON normally, OFF when Shamiko is
+#      installed (Shamiko hides from the same list without Magisk's enforcement).
+#   3. Adds each APP and the Play Store (com.android.vending) to the DenyList so
+#      the app cannot observe root. It deliberately does NOT add Google Play
+#      Services (com.google.android.gms): PlayIntegrityFix injects into its
+#      DroidGuard process, so hiding GMS would unmount the spoof (PIF even
+#      removes GMS from the DenyList itself for this reason).
+#   4. If TrickyStore is installed, adds each APP to its target list (the keybox
+#      path for hardware-attested Play Integrity).
+#
+#   --check    report current state and what would change; make NO changes.
+#   --reboot   reboot afterwards (Zygisk needs a boot) and wait for the device.
+#   --verify   after applying (+reboot), launch each APP, confirm the Play
+#              Integrity / DroidGuard attestation runs, and save a screenshot so
+#              you can eyeball that the wall is gone.
+#
+# Writes only to the device's Magisk config (and, with --verify, a screenshot to
+# the current directory). Needs root (su over adb). Background and method:
+# docs/app-integrity-rooted-fix.md; why the *verdict* can still cap at BASIC on a
+# locked-but-rooted board: docs/play-integrity-hardware-avb.md.
+set -euo pipefail
+
+ADB=${ADB:-adb}
+SERIAL=""; MODE=apply; WANT_REBOOT=0; WANT_VERIFY=0; APPS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--serial) SERIAL=$2; shift 2 ;;
+    --check) MODE=check; shift ;;
+    --reboot) WANT_REBOOT=1; shift ;;
+    --verify) WANT_VERIFY=1; shift ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -*) echo "unknown option $1 (see --help)" >&2; exit 2 ;;
+    *) APPS+=("$1"); shift ;;
+  esac
+done
+[ -n "$SERIAL" ] || { echo "usage: android-integrity-fix -s SERIAL [--check] [--reboot] [--verify] APP [APP...]" >&2; exit 2; }
+[ "${#APPS[@]}" -gt 0 ] || { echo "give at least one app package, e.g. com.whatsapp" >&2; exit 2; }
+
+a() { "$ADB" -s "$SERIAL" "$@" </dev/null; }
+if [ -t 1 ]; then B=$'\033[1m'; R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; C=$'\033[36m'; N=$'\033[0m'; else B=; R=; G=; Y=; C=; N=; fi
+say() { printf '%s\n' "$*"; }
+ok()   { printf '  %s[ OK ]%s %s\n' "$G" "$N" "$*"; }
+chg()  { printf '  %s[DONE]%s %s\n' "$C" "$N" "$*"; }
+warn() { printf '  %s[WARN]%s %s\n' "$Y" "$N" "$*"; }
+
+state=$(a get-state 2>/dev/null | tr -d '\r' || true)
+[ "$state" = device ] || { echo "device $SERIAL is not in adb 'device' state (got '${state:-none}')" >&2; exit 1; }
+a shell 'su -c id' 2>/dev/null | grep -q 'uid=0' || { echo "no root: 'su' does not work over adb on $SERIAL" >&2; exit 1; }
+
+# ---- the on-device worker (runs as root; $1=mode, rest=app packages) --------
+DEV=$(mktemp)
+cat > "$DEV" <<'DEVSCRIPT'
+#!/system/bin/sh
+MODE="$1"; shift; APPS="$*"
+MOD=/data/adb/modules
+command -v magisk >/dev/null 2>&1 || { echo "MAGISK=no"; echo "AIF_DONE"; exit 0; }
+echo "MAGISK=$(magisk -V 2>/dev/null)"
+pif=""; sham=""
+for d in "$MOD"/*/; do n=$(basename "$d"); [ "$n" = '*' ] && continue
+  case "$n" in *[Pp]lay[Ii]ntegrity*|*pif*|*PIF*) pif="$pif $n" ;; esac
+  case "$n" in *[Ss]hamiko*) sham="$sham $n" ;; esac
+done
+echo "PIF=${pif# }"
+echo "SHAMIKO=${sham# }"
+[ -f /data/adb/tricky_store/target.txt ] && echo "TRICKYSTORE=yes" || echo "TRICKYSTORE=no"
+zyg=$(magisk --sqlite "SELECT value FROM settings WHERE key='zygisk'" 2>/dev/null | sed 's/.*=//')
+den=$(magisk --sqlite "SELECT value FROM settings WHERE key='denylist'" 2>/dev/null | sed 's/.*=//')
+echo "ZYGISK_NOW=${zyg:-0}"
+echo "DENYLIST_ENFORCE_NOW=${den:-0}"
+if [ -n "$sham" ]; then wantenf=0; else wantenf=1; fi
+echo "DENYLIST_ENFORCE_WANT=$wantenf"
+dl=$(magisk --sqlite "SELECT package_name FROM denylist" 2>/dev/null | sed 's/.*=//' | sort -u | tr '\n' ' ')
+echo "DENYLIST_NOW=$dl"
+reboot=0
+if [ "$MODE" = apply ]; then
+  if [ "${zyg:-0}" != 1 ]; then magisk --sqlite "REPLACE INTO settings (key,value) VALUES('zygisk',1)" >/dev/null 2>&1; echo "CHANGED=enabled Zygisk (needs reboot)"; reboot=1; fi
+  if [ "${den:-0}" != "$wantenf" ]; then magisk --sqlite "REPLACE INTO settings (key,value) VALUES('denylist',$wantenf)" >/dev/null 2>&1; echo "CHANGED=set DenyList enforce=$wantenf"; fi
+  for p in $APPS com.android.vending; do
+    case " $dl " in *" $p "*) : ;; *) magisk --denylist add "$p" >/dev/null 2>&1 && echo "CHANGED=DenyList + $p" ;; esac
+  done
+  if [ -f /data/adb/tricky_store/target.txt ]; then
+    for p in $APPS; do
+      grep -q "^$p\$" /data/adb/tricky_store/target.txt 2>/dev/null || { echo "$p" >> /data/adb/tricky_store/target.txt; echo "CHANGED=TrickyStore target + $p"; }
+    done
+  fi
+fi
+echo "NEEDS_REBOOT=$reboot"
+echo "AIF_DONE"
+DEVSCRIPT
+a push "$DEV" /data/local/tmp/.aif.sh >/dev/null 2>&1
+rm -f "$DEV"
+out=$(a shell "su -c 'sh /data/local/tmp/.aif.sh $MODE ${APPS[*]}'" 2>/dev/null | tr -d '\r')
+a shell "su -c 'rm -f /data/local/tmp/.aif.sh'" >/dev/null 2>&1 || true
+grep -q AIF_DONE <<<"$out" || { echo "the on-device step did not complete; raw output:" >&2; echo "$out" >&2; exit 1; }
+
+g() { grep -m1 "^$1=" <<<"$out" | cut -d= -f2- ; }
+say "${B}android-integrity-fix${N}  device $SERIAL  (${MODE} mode)  apps: ${APPS[*]}"
+say ""
+[ "$(g MAGISK)" = no ] && { echo "  Magisk not found on this device -- nothing to do." ; exit 1; }
+say "${B}Magisk stack${N}"
+ok "Magisk $(g MAGISK)"
+zyg=$(g ZYGISK_NOW); [ "$zyg" = 1 ] && ok "Zygisk ON" || warn "Zygisk OFF  <- disables PIF / DenyList / Shamiko until a reboot"
+pif=$(g PIF);      [ -n "$pif" ] && ok "PlayIntegrityFix: $pif" || warn "no PlayIntegrityFix module -- Play Integrity will stay uncertified"
+sham=$(g SHAMIKO); [ -n "$sham" ] && ok "Shamiko: $sham (DenyList used un-enforced)" || say "  (no Shamiko; DenyList enforcement is the hide mechanism)"
+[ "$(g TRICKYSTORE)" = yes ] && ok "TrickyStore present (keybox attestation)" || say "  (no TrickyStore; hardware-attested verdict may cap at BASIC)"
+say ""
+if [ "$MODE" = check ]; then
+  say "${B}DenyList now${N}: $(g DENYLIST_NOW)"
+  want=$(g DENYLIST_ENFORCE_WANT); nowe=$(g DENYLIST_ENFORCE_NOW)
+  say "DenyList enforce: now=$nowe want=$want"
+  say ""
+  say "Run without --check to apply: ensure Zygisk on, DenyList enforce=$want, add [${APPS[*]} com.android.vending] to the DenyList, and target the apps in TrickyStore."
+  exit 0
+fi
+
+say "${B}Applied${N}"
+changed=0
+while IFS= read -r line; do chg "${line#CHANGED=}"; changed=1; done < <(grep '^CHANGED=' <<<"$out" || true)
+[ "$changed" = 0 ] && say "  (already configured -- no changes needed)"
+needreboot=$(g NEEDS_REBOOT)
+say ""
+
+if [ "$needreboot" = 1 ]; then
+  if [ "$WANT_REBOOT" = 1 ]; then
+    say "Rebooting for Zygisk to take effect..."
+    a reboot || true
+    sleep 50; a wait-for-device
+    for _ in $(seq 1 30); do [ "$(a shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break; sleep 4; done
+    ok "device back up"
+  else
+    warn "Zygisk was just enabled -- REBOOT REQUIRED. Re-run with --reboot, or reboot the device, then launch the app."
+  fi
+else
+  # live change: restart the apps so they re-check on a clean start
+  for p in "${APPS[@]}"; do a shell "am force-stop $p" >/dev/null 2>&1 || true; done
+  say "No reboot needed (Zygisk already on). Target apps force-stopped; just reopen them."
+fi
+
+if [ "$WANT_VERIFY" = 1 ]; then
+  say ""
+  say "${B}Verify${N}"
+  for p in "${APPS[@]}"; do
+    a shell "am force-stop $p" >/dev/null 2>&1 || true
+    a shell "monkey -p $p -c android.intent.category.LAUNCHER 1" >/dev/null 2>&1 || true
+    sleep 14
+    dg=$(a shell "su -c 'logcat -d'" 2>/dev/null | grep -ciE "droidguard|play.integrity" || true)
+    shot="integrity-verify-${p}.png"
+    a exec-out screencap -p > "$shot" 2>/dev/null || true
+    if [ "${dg:-0}" -gt 0 ]; then ok "$p: Play Integrity / DroidGuard ran ($dg log lines); screenshot -> $shot"
+    else warn "$p: no DroidGuard activity seen; check the screenshot -> $shot"; fi
+  done
+  say "Open the screenshot(s): a normal welcome/login screen = wall cleared; a shield/'official app' screen = still blocked (see docs/app-integrity-rooted-fix.md: add Shamiko, clear app data, verify keybox)."
+fi
