@@ -146,10 +146,15 @@ others don't suit you.
    LLM_BACKEND=cloud
    CLOUD_PROVIDER=runpod
    CLOUD_LLM_URL=https://<your-pod-id>-8000.proxy.runpod.net/v1
-   CLOUD_LLM_MODEL=qwen3-32b
+   CLOUD_LLM_MODEL=qwen2.5-72b-instruct
    CLOUD_LLM_KEY=the-pods-key
    RUNPOD_API_KEY=your-runpod-api-key
    ```
+   `qwen2.5-72b-instruct` is a larger, stronger model than the README example's
+   `qwen3-32b`. It needs more graphics memory, so when you create the pod pick a
+   **bigger GPU (roughly 80 GB+, or two GPUs)** — or use a *quantized* build of the
+   model, which is smaller. Set the pod's `--served-model-name` to match the name
+   above. Bigger = better answers but more $/hour, so stop it when you're done.
    **Remember to stop the pod when you're done** (`make cloud-down`, or the
    **Stop** button in RunPod) or it keeps charging.
 
@@ -177,7 +182,44 @@ If you only use an online AI (Options A–C), you can ignore anything about
    minutes). When it reopens, VS Code is now working *inside* the Docker
    workspace, with the **Cline** and **Roo Code** AI assistants installed.
 3. Click the Cline or Roo Code icon in the left bar and type what you want in
-   plain English.
+   plain English (the next section shows exactly how in each tool).
+
+## How you drive it — typing in plain English
+
+Whichever tool you use, the rhythm is the same: **you type a request in plain
+English, the model works out the steps, the tool carries them out (editing files,
+running commands) and shows you the result, and you reply to refine it.** You never
+have to write code yourself unless you want to. The model (Qwen or Claude) is the
+brain; these are the three places you actually type.
+
+**Cline** (in VS Code) — the friendly default.
+- Click the **Cline** icon in the left sidebar; a chat panel opens.
+- Type in the box at the bottom, e.g. *"Add a dark-mode toggle to the settings
+  screen and remember the choice."* Press **Enter**.
+- Cline shows a plan, then each file change and command it wants to run, and waits
+  for you to click **Approve** (or set it to auto-approve). Keep the conversation
+  going in the same box — *"make the toggle bigger"*, *"now run the tests"*.
+- The **Plan / Act** switch: *Plan* talks the approach through first; *Act* just
+  does it.
+
+**Roo Code** (in VS Code) — similar, with task "modes".
+- Click the **Roo Code** (kangaroo) icon; its chat panel opens.
+- Pick a **mode** from the dropdown for the kind of help you want — *Architect*
+  (plan a design), *Code* (write/change code), *Debug* (track down a bug), *Ask*
+  (just answer) — then type your request and press **Enter**.
+- Like Cline, it proposes the edits and commands and shows the results; you steer
+  with more plain-English replies.
+
+**OpenCode** (in the terminal) — for hands-off, multi-step jobs.
+- Open the container's terminal (in VS Code: **Terminal → New Terminal**), go to
+  your project folder, and run `opencode`. A full-screen text interface opens.
+- Type your request at the prompt and press **Enter**, e.g. *"Create a new Android
+  app that shows 'Hello' and build it."* It then works through the steps on its own
+  in the terminal, running commands as it goes.
+- For a one-shot task without the interface: `opencode run "your request here"`.
+
+Tip: start small and specific (*"rename this button"*, *"explain what this file
+does"*) to get the feel, then work up to bigger requests.
 
 ## Connecting a phone (the easy way: Wi-Fi)
 
