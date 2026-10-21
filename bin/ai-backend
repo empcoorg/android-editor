@@ -1,7 +1,7 @@
 #!/bin/bash
-# ai-backend: capability-aware choice between local Ollama and a cloud
-# endpoint (any OpenAI-compatible provider); start the remote instance on
-# demand, stop it after a fixed idle timeout.
+# ai-backend: capability-aware choice between local Ollama, a cloud endpoint
+# (any OpenAI-compatible provider), and Claude (LLM_BACKEND=anthropic); start
+# the remote instance on demand, stop it after a fixed idle timeout.
 #
 # HOST-side tool (needs docker, curl, jq; provider CLI such as runpodctl is
 # only needed for the built-in RunPod fallback — any other provider supplies
@@ -13,23 +13,33 @@
 #   ai-backend start                  switch to cloud; start the instance if a
 #                                      lifecycle command is configured
 #   ai-backend pick <default|large>   choose backend+model; start instance if needed
+#   ai-backend escalate               jump to the bigger backend now (cloud, or
+#                                      Claude if ANTHROPIC_API_KEY is set)
+#   ai-backend stall                  report a stalled local attempt; auto-escalates
+#                                      once ESCALATE_AFTER stalls pile up
 #   ai-backend beat                   record activity (resets the idle timer)
 #   ai-backend watch [--once]         stop the instance once idle > IDLE_MINUTES
-#   ai-backend stop                   stop the instance now (billing pauses)
+#   ai-backend stop                   back to local; stop the instance (billing pauses)
 #   ai-backend recommend "<task>"     suggest which AI tool fits the task
 #
-# Env:  IDLE_MINUTES (15)   idle time before the instance is auto-stopped
-#       LOCAL_MAX_B  (20)   params (B) local Ollama is trusted to run well
-#       AI_BACKEND_DRYRUN=1 print the decision without starting/stopping anything
+# Env:  IDLE_MINUTES   (15)  idle time before the instance is auto-stopped
+#       LOCAL_MAX_B    (20)  params (B) local Ollama is trusted to run well
+#       ESCALATE_AFTER (2)   stalled local attempts before auto-escalating to cloud/Claude
+#       AI_BACKEND_DRYRUN=1  print the decision without starting/stopping anything
 #
-# Policy: use local when it fits the requested tier; when a tier needs a bigger
-# model than local can run well and the cloud endpoint offers one, start the
-# instance on demand, then stop it after the idle timeout.
+# Policy: run locally while the local model fits the task. Escalate to the
+# cloud/Anthropic model when (1) a task needs a bigger model than local runs
+# well, or (2) local is STALLING — looping or retrying without progress. On
+# escalation a cloud instance is started on demand and stopped after the idle
+# timeout so billing pauses. Escalating early on a stall is deliberate: a quick
+# jump to bigger compute usually breaks the loop faster, and in less wall-clock
+# time, than letting a small model grind. A caller (agent wrapper, or you)
+# signals a stall with `ai-backend stall`; `ai-backend escalate` jumps at once.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT" || exit 1
 ENVF="$ROOT/.env"; STATE="${HOME}/.android-editor"; mkdir -p "$STATE"
-BEAT="$STATE/ai-backend.last"; PODSTART="$STATE/ai-backend.pod-started"
-IDLE_MINUTES="${IDLE_MINUTES:-15}"; LOCAL_MAX_B="${LOCAL_MAX_B:-20}"; DRYRUN="${AI_BACKEND_DRYRUN:-0}"
+BEAT="$STATE/ai-backend.last"; PODSTART="$STATE/ai-backend.pod-started"; STALLS="$STATE/ai-backend.stalls"
+IDLE_MINUTES="${IDLE_MINUTES:-15}"; LOCAL_MAX_B="${LOCAL_MAX_B:-20}"; ESCALATE_AFTER="${ESCALATE_AFTER:-2}"; DRYRUN="${AI_BACKEND_DRYRUN:-0}"
 
 envv() {
   local v; v=$(grep -m1 "^$1=" "$ENVF" 2>/dev/null | cut -d= -f2-)
@@ -107,6 +117,7 @@ set_backend() {
   [ "$DRYRUN" = 1 ] && { echo "  (dry-run) set LLM_BACKEND=$b"; return; }
   if ! grep -q '^LLM_BACKEND=' "$ENVF" 2>/dev/null; then echo "LLM_BACKEND=$b" >> "$ENVF"
   else sed -i.bak "s/^LLM_BACKEND=.*/LLM_BACKEND=$b/" "$ENVF" && rm -f "$ENVF.bak"; fi
+  [ "$b" = local ] && rm -f "$STALLS"
   recreate_dev
 }
 
@@ -137,6 +148,7 @@ cmd_status() {
   echo "  provider        $PROVIDER"
   echo "  cloud model     $(fmt_model "$CLOUD_MODEL")"
   echo "  endpoint        ${CLOUD_URL:-<not set>}"
+  [ "$BACKEND" = anthropic ] && echo "  anthropic model $(envv ANTHROPIC_MODEL)  ($([ -n "$(envv ANTHROPIC_API_KEY)" ] && echo 'key set' || echo 'NO KEY'))"
   echo "  local model     $(fmt_model "$LOCAL_MODEL")$(ollama_has "$LOCAL_MODEL" && echo '  [present]' || echo '  [MISSING in Ollama]')"
   echo "  instance        ${INSTANCE:-<none>}  $st"
   [ "$st" = running ] && echo "  idle            $(idle_seconds)s / $((IDLE_MINUTES*60))s before auto-stop"
@@ -172,6 +184,39 @@ cmd_pick() {
   fi
 }
 
+# The bigger backend to jump to on a stall: Claude if configured, else cloud.
+escalate_target() {
+  if [ -n "$(envv ANTHROPIC_API_KEY)" ]; then echo anthropic
+  elif [ -n "$CLOUD_URL" ] && [ -n "$CLOUD_MODEL" ]; then echo cloud
+  else echo ""; fi
+}
+cmd_escalate() {
+  local tgt; tgt=$(escalate_target)
+  [ -n "$tgt" ] || { echo "escalate: no bigger backend configured — set ANTHROPIC_API_KEY, or CLOUD_LLM_URL/CLOUD_LLM_MODEL, in .env (see .env.example)" >&2; exit 2; }
+  if [ "$tgt" = cloud ]; then
+    echo "escalate -> cloud $(fmt_model "$CLOUD_MODEL") ($PROVIDER)"
+    if [ "$(instance_state)" != running ]; then echo "  instance not running; starting on demand..."; instance_start; fi
+    set_backend cloud
+    echo "  LLM_BACKEND=cloud. Endpoint warms up in a few minutes (ai-backend status)."
+  else
+    echo "escalate -> Claude ($(envv ANTHROPIC_MODEL))"
+    set_backend anthropic
+    echo "  LLM_BACKEND=anthropic. Reached directly, nothing to start/stop."
+  fi
+  rm -f "$STALLS"; beat
+}
+cmd_stall() {
+  if [ "$BACKEND" != local ]; then echo "stall: already on $BACKEND (not local); nothing to escalate"; return 0; fi
+  local n; n=$(( $(cat "$STALLS" 2>/dev/null || echo 0) + 1 ))
+  if [ "$n" -ge "$ESCALATE_AFTER" ]; then
+    echo "stall $n/$ESCALATE_AFTER on local -> escalating"
+    cmd_escalate
+  else
+    [ "$DRYRUN" = 1 ] || echo "$n" > "$STALLS"
+    echo "stall $n/$ESCALATE_AFTER on local (escalates at $ESCALATE_AFTER; run 'ai-backend escalate' to jump now)"
+  fi
+}
+
 cmd_watch() {
   local once=0; [ "${1:-}" = --once ] && once=1
   if [ -z "$STOP_CMD" ] && ! have_runpod_fallback; then
@@ -193,11 +238,13 @@ case "${1:-status}" in
   status)     shift; cmd_status "$@" ;;
   start)      shift; cmd_start "$@" ;;
   pick)       shift; cmd_pick "$@" ;;
+  escalate)   shift; cmd_escalate "$@" ;;
+  stall)      shift; cmd_stall "$@" ;;
   beat)       beat ;;
   watch)      shift; cmd_watch "$@" ;;
   stop)       instance_stop; set_backend local; echo "backend -> local; instance stopped where a stop command is configured" ;;
   recommend)  shift; echo "task: ${1:-<none>}"; echo "suggest: $(recommend_tool "${1:-}")" ;;
-  -h|--help|help) sed -n '2,27p' "$0" ;;
+  -h|--help|help) sed -n '2,37p' "$0" ;;
   *) echo "unknown: $1 (see --help)" >&2; exit 2 ;;
 esac
 
