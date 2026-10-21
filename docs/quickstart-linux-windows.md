@@ -63,6 +63,11 @@ make attach                                # shell in the container
 
 ## Windows (Docker Desktop + WSL2)
 
+> **New to this / not a programmer?** Follow the gentle, click-by-click version instead:
+> **[windows-setup-beginner.md](windows-setup-beginner.md)** — what each program is,
+> installing Docker + Git + VS Code, cloning the repo, and making a Claude or RunPod
+> account and pasting the keys into `.env`. The steps below are the condensed version.
+
 ```powershell
 # 1. Docker Desktop with the WSL2 backend (installer default). Start it once.
 # 2. Ollama for Windows (https://ollama.com/download). Make it listen for the
