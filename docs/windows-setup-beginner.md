@@ -35,6 +35,29 @@ downloads.
 
 ---
 
+## How the pieces fit: the "brain" vs. the app you type into
+
+One idea makes everything else click:
+
+- **The model** — `Qwen2.5-72B`, `Claude`, and the rest — is just the **brain**.
+  It's an engine behind the scenes: text goes in, text comes out. It has **no
+  screen or interface of its own**, so you never talk to it directly.
+- **Cline, Roo Code, and OpenCode** are the **apps you actually use** — the
+  interactive part. You type your request into one of them; it sends that to the
+  brain, carries out the file edits and commands the brain comes up with, and shows
+  you the results.
+- **Claude**, in this project, is simply **another brain you can pick** (by setting
+  `LLM_BACKEND=anthropic`) — used exactly like Qwen, not a separate program. (It's
+  not the standalone "Claude Code" app you may have heard of; this project doesn't
+  use that one.)
+
+So you always *work* inside Cline / Roo Code / OpenCode — they're interchangeable
+front ends — and the model behind them is interchangeable too. **Switching the
+brain is just changing one line in `.env`** (Step 4); your way of working doesn't
+change.
+
+---
+
 ## Step 1 — Install the three free programs
 
 Install these in order. Accept the default options in every installer unless told
