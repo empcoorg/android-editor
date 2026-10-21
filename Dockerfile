@@ -13,10 +13,11 @@
 #                avbtool, simg2img/img2simg, lpunpack/lpmake/lpdump (super.img),
 #                sdat2img, ext4/erofs/f2fs tools, mtkclient (MediaTek BROM),
 #                edl (Qualcomm EDL), heimdall (Samsung), android-full-backup
-#   AI:          OpenCode, wired to two local models served by Ollama on the
-#                host (see .env): qwen2.5-coder:32b default,
-#                deepseek-r1:14b second opinion. Cline and Roo Code run here
-#                through VS Code Dev Containers with the same two models.
+#   AI:          OpenCode, wired to two models served by Ollama on the
+#                host (see .env): qwen3.8:27b default, muse-glimmer:30b
+#                second opinion — pick your own with bin/pick-model. Cline
+#                and Roo Code run here through VS Code Dev Containers with
+#                the same two models.
 #
 # Google ships Android build-tools for linux/x86_64 only, so the image is
 # linux/amd64 (Rosetta on Apple silicon).

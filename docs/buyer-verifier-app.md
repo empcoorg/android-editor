@@ -1,7 +1,12 @@
-# Buyer-side Android authenticity verifier (QUEUED)
+# Buyer-side Android authenticity verifier
 
-**Status:** queued — start **after** the connected Example Phone WhatsApp / Play-Integrity
-fix. Do not begin implementation yet.
+**Status:** in development since 2026-10-14 — the connected-device WhatsApp /
+Play-Integrity fix that gated this work is finished. First implementation lives
+in **`buyer-verifier/`**: self-check mode (run on the candidate), USB-OTG
+Tier-1 descriptor scan (run on the buyer's phone), Play/WhatsApp approval check,
+claimed-vs-actual diff, and an A4 **PDF report** for merchant claims. Still
+open: Bluetooth OUI cross-check, the bundled signature DB, and the real
+two-phone hardware test (open question 1).
 
 ## Goal
 A free, downloadable Android app a shopper runs on **their own phone** to
@@ -60,3 +65,11 @@ For checks that must run *on* the candidate (Play-Integrity verdict, build
 3. Decide distribution: F-Droid / Play / direct APK.
 4. UI: single-screen scan → verdict.
 5. Decide whether this doc stays in the public repo or moves to a private one.
+
+## Progress log
+- **2026-10-14** — `buyer-verifier/` building and green: self-check + USB-OTG
+  scan + WhatsApp/Play approval + PDF report, with 45 JVM unit tests covering
+  the rule engine, verdict scoring and the report text. The report test
+  enforces the evidentiary requirement: the generated PDF text must never
+  reference system-state changes — it documents the firmware and software
+  exactly as shipped on the device.
