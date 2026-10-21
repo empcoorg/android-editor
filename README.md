@@ -97,6 +97,8 @@ Inside: `android-doctor` lists tools, models and attached phones; `opencode`
 starts the agent in the current directory. Your projects live in
 `./workspace`, mounted at `/workspace`.
 
+> **On Linux or Windows?** macOS is the default; see **[docs/quickstart-linux-windows.md](docs/quickstart-linux-windows.md)** for the Linux (direct USB passthrough) and Windows (Docker Desktop + adb-over-Wi-Fi) steps.
+
 ## VS Code with Cline and Roo Code
 
 Open this folder in VS Code (with the *Dev Containers* extension) and run
