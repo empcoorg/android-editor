@@ -1,8 +1,11 @@
 # android-editor
 
 A Docker dev container for **building Android apps** and **rooting Android
-phones**, with a local AI coding agent. On macOS, phones plugged into USB reach
-the container over USB/IP.
+phones**, driven by an AI coding agent — OpenCode in the terminal, Cline and Roo
+Code in VS Code — on local Ollama, a cloud endpoint, or Claude. Phones reach the
+container over USB/IP (macOS), direct USB (Linux), or adb over Wi-Fi. It also
+bundles tools for full device backups, Play-Integrity / root hiding, spotting a
+counterfeit phone before you buy, and building installable WhatsApp sticker packs.
 
 **Contents**
 
