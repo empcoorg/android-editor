@@ -4,7 +4,24 @@ A Docker dev container for **building Android apps** and **rooting Android
 phones**, with a local AI coding agent. On macOS, phones plugged into USB reach
 the container over USB/IP.
 
-**Contents:** [Choosing your models](#choosing-your-models) · [Quick start](#quick-start-macos) · [Cline & Roo Code](#vs-code-with-cline-and-roo-code) · [Cloud & Claude backends](#cloud-model-backend-optional) · [Phones over USB](#phones-over-usb) · [Check before you buy](#checking-a-phone-before-you-buy-it) · [Rooting](#rooting-a-phone) · [Building an app](#building-an-app) · [Settings](#settings-env) · [Layout](#layout)
+**Contents**
+
+- [Choosing your models](#choosing-your-models)
+  - [Template defaults](#template-defaults-october-2026)
+  - [Pick your own](#pick-your-own)
+  - [The tool-calling rule](#the-tool-calling-rule)
+- [Quick start (macOS)](#quick-start-macos)
+- [VS Code with Cline and Roo Code](#vs-code-with-cline-and-roo-code)
+  - [Ports](#ports)
+- [Cloud model backend](#cloud-model-backend-optional)
+  - [Worked example: RunPod for burst GPU](#worked-example-runpod-for-burst-gpu)
+  - [Automatic backend selection](#automatic-backend-selection)
+- [Phones over USB](#phones-over-usb)
+- [Checking a phone before you buy it](#checking-a-phone-before-you-buy-it)
+- [Rooting a phone](#rooting-a-phone)
+- [Building an app](#building-an-app)
+- [Settings (`.env`)](#settings-env)
+- [Layout](#layout)
 
 > **Not sure whether to run models locally, in the cloud, or use Claude — or when Docker is even involved?** See **[docs/ai-backends.md](docs/ai-backends.md)**: the three backends, cloud quickstarts (hosted API, RunPod, Vast.ai), the escalation policy, and a map of what runs on the host vs in the container vs the cloud.
 
