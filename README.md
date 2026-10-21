@@ -1,10 +1,30 @@
 # android-editor
 
 A Docker dev container for **building Android apps** and **rooting Android
-phones**, with a local AI coding agent. On macOS, phones plugged into USB reach
-the container over USB/IP.
+phones**, driven by an AI coding agent — OpenCode in the terminal, Cline and Roo
+Code in VS Code — on local Ollama, a cloud endpoint, or Claude. Phones reach the
+container over USB/IP (macOS), direct USB (Linux), or adb over Wi-Fi. It also
+bundles tools for full device backups, Play-Integrity / root hiding, spotting a
+counterfeit phone before you buy, and building installable WhatsApp sticker packs.
 
-**Contents:** [Choosing your models](#choosing-your-models) · [Quick start](#quick-start-macos) · [Cline & Roo Code](#vs-code-with-cline-and-roo-code) · [Cloud & Claude backends](#cloud-model-backend-optional) · [Phones over USB](#phones-over-usb) · [Check before you buy](#checking-a-phone-before-you-buy-it) · [Rooting](#rooting-a-phone) · [Building an app](#building-an-app) · [Settings](#settings-env) · [Layout](#layout)
+**Contents**
+
+- [Quick start (macOS)](#quick-start-macos) — or [Linux / Windows](docs/quickstart-linux-windows.md)
+- [Choosing your models](#choosing-your-models)
+  - [Template defaults](#template-defaults-october-2026)
+  - [Pick your own](#pick-your-own)
+  - [The tool-calling rule](#the-tool-calling-rule)
+- [VS Code with Cline and Roo Code](#vs-code-with-cline-and-roo-code)
+  - [Ports](#ports)
+- [Cloud model backend](#cloud-model-backend-optional) — [backends & Docker guide](docs/ai-backends.md)
+  - [Worked example: RunPod for burst GPU](#worked-example-runpod-for-burst-gpu)
+  - [Automatic backend selection](#automatic-backend-selection)
+- [Phones over USB](#phones-over-usb)
+- [Checking a phone before you buy it](#checking-a-phone-before-you-buy-it)
+- [Rooting a phone](#rooting-a-phone)
+- [Building an app](#building-an-app)
+- [Settings (`.env`)](#settings-env)
+- [Layout](#layout)
 
 > **Not sure whether to run models locally, in the cloud, or use Claude — or when Docker is even involved?** See **[docs/ai-backends.md](docs/ai-backends.md)**: the three backends, cloud quickstarts (hosted API, RunPod, Vast.ai), the escalation policy, and a map of what runs on the host vs in the container vs the cloud.
 
@@ -13,7 +33,24 @@ the container over USB/IP.
 | Build apps | OpenJDK 17 and 11, Maven, Android SDK (cmdline-tools, platform-tools, build-tools 36 and 33.0.2, platforms 36 and 33), Gradle 8.14 as `gradle` and Gradle 7.5.1 as `gradle7`. Gradle downloads any other SDK version a project asks for. NDK optional (`INSTALL_NDK=1`). |
 | Root phones | adb, fastboot, Magisk APK (`$MAGISK_APK`) + `magiskboot`, payload-dumper-go, mkbootimg / unpack_bootimg / repack_bootimg, avbtool, simg2img / img2simg, lpunpack / lpmake / lpdump (super.img), sdat2img, ext4 / EROFS / F2FS tools, binwalk, dtc, mtkclient (`mtk`, MediaTek), edl (Qualcomm), heimdall (Samsung), `android-full-backup`, `android-integrity-fix`, `wa-sticker-pack` |
 | Shell | wget, curl, git, nano, vim, tmux, htop, rsync, jq, ripgrep, 7z, zstd, lz4, brotli, hexdump, ping and the usual coreutils |
-| AI | OpenCode in the terminal; Cline and Roo Code in VS Code. All use the same two local models. |
+| AI | OpenCode in the terminal; Cline and Roo Code in VS Code — all on local Ollama, a cloud endpoint, or Claude (`LLM_BACKEND`, see [backends guide](docs/ai-backends.md)). |
+
+## Quick start (macOS)
+
+```bash
+brew install ollama rust          # once: model server, and the toolchain for the USB/IP server
+cp .env.example .env              # once
+make build                        # once, ~20 minutes
+make dev-up                       # starts the macOS-side services, then the container
+make models                       # once: downloads the two models (~36 GB)
+make attach                       # a shell in the container
+```
+
+Inside: `android-doctor` lists tools, models and attached phones; `opencode`
+starts the agent in the current directory. Your projects live in
+`./workspace`, mounted at `/workspace`.
+
+> **On Linux or Windows?** macOS is the default; see **[docs/quickstart-linux-windows.md](docs/quickstart-linux-windows.md)** for the Linux (direct USB passthrough) and Windows (Docker Desktop + adb-over-Wi-Fi) steps.
 
 ## Choosing your models
 
@@ -85,23 +122,6 @@ A model much larger than the machine's memory spills onto the CPU and drops to
 a fraction of a token per second — a smaller model that stays resident beats a
 bigger one that swaps. The second model never needs tool calling: the
 `@reasoner` subagent is read-only by design and only returns prose.
-
-## Quick start (macOS)
-
-```bash
-brew install ollama rust          # once: model server, and the toolchain for the USB/IP server
-cp .env.example .env              # once
-make build                        # once, ~20 minutes
-make dev-up                       # starts the macOS-side services, then the container
-make models                       # once: downloads the two models (~36 GB)
-make attach                       # a shell in the container
-```
-
-Inside: `android-doctor` lists tools, models and attached phones; `opencode`
-starts the agent in the current directory. Your projects live in
-`./workspace`, mounted at `/workspace`.
-
-> **On Linux or Windows?** macOS is the default; see **[docs/quickstart-linux-windows.md](docs/quickstart-linux-windows.md)** for the Linux (direct USB passthrough) and Windows (Docker Desktop + adb-over-Wi-Fi) steps.
 
 ## VS Code with Cline and Roo Code
 
