@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# wa-sticker-pack: turn a folder of images into an installable WhatsApp sticker
+# pack, so your custom stickers survive a wipe / re-flash. The pack is a tiny
+# Android app (built from wa-sticker-pack/ in this repo) that registers with
+# WhatsApp; keep the .apk and, after any reset, `adb install` it and tap
+# "Add to WhatsApp" -- no re-doing the stickers.
+#
+#   wa-sticker-pack --name "My Pack" [--publisher "Me"] --in IMAGES_DIR \
+#                   [--out pack.apk] [--emoji 😀] [--app-id com.stickers.pack.mypack]
+#
+# Images: png/jpg/jpeg/webp/gif/heic. Each is squared to 512x512 WebP (<=100 KB),
+# the first also becomes the 96x96 tray icon. WhatsApp allows 3-30 per pack.
+# Needs ImageMagick (`magick`) + jq + a JDK; builds with the project's gradle
+# wrapper and your Android SDK. Animated stickers are flattened to their first
+# frame (static) in this version.
+set -euo pipefail
+
+NAME=""; PUBLISHER="You"; IN=""; OUT=""; APPID=""; EMOJI="😀"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) NAME=$2; shift 2 ;;
+    --publisher) PUBLISHER=$2; shift 2 ;;
+    --in) IN=$2; shift 2 ;;
+    --out) OUT=$2; shift 2 ;;
+    --emoji) EMOJI=$2; shift 2 ;;
+    --app-id) APPID=$2; shift 2 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) echo "unknown option $1 (see --help)" >&2; exit 2 ;;
+  esac
+done
+[ -n "$NAME" ] && [ -n "$IN" ] || { echo "usage: wa-sticker-pack --name NAME --in IMAGES_DIR [--out pack.apk]" >&2; exit 2; }
+[ -d "$IN" ] || { echo "not a directory: $IN" >&2; exit 2; }
+command -v magick >/dev/null 2>&1 || { echo "need ImageMagick (magick): brew install imagemagick / apt install imagemagick" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "need jq" >&2; exit 1; }
+
+here=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$here/../.." && pwd); TEMPLATE="$REPO/wa-sticker-pack"
+[ -f "$TEMPLATE/settings.gradle.kts" ] || { echo "template not found at $TEMPLATE" >&2; exit 1; }
+
+ID=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//; s/_*$//'); [ -n "$ID" ] || ID=pack
+[ -n "$APPID" ] || APPID="com.stickers.pack.$ID"
+[ -n "$OUT" ] || OUT="$PWD/$ID.apk"
+
+# ---- collect source images (sorted, deterministic) -------------------------
+imgs=(); while IFS= read -r f; do imgs+=("$f"); done < <(find "$IN" -maxdepth 1 -type f \
+  \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.heic' \) | sort)
+n=${#imgs[@]}
+[ "$n" -ge 1 ] || { echo "no images in $IN" >&2; exit 1; }
+if [ "$n" -gt 30 ]; then echo "note: $n images found; WhatsApp caps a pack at 30, using the first 30"; imgs=("${imgs[@]:0:30}"); n=30; fi
+[ "$n" -ge 3 ] || echo "note: only $n sticker(s); WhatsApp wants at least 3 to add a pack"
+
+# ---- build dir = clean copy of the template --------------------------------
+BUILD=$(mktemp -d); trap 'rm -rf "$BUILD"' EXIT
+( cd "$TEMPLATE" && find . -type f -not -path './.gradle/*' -not -path './build/*' -not -path './app/build/*' -not -name 'local.properties' -print0 \
+  | while IFS= read -r -d '' f; do mkdir -p "$BUILD/$(dirname "$f")"; cp "$f" "$BUILD/$f"; done )
+[ -f "$REPO/wa-sticker-pack/local.properties" ] && cp "$REPO/wa-sticker-pack/local.properties" "$BUILD/local.properties"
+[ -f "$BUILD/local.properties" ] || { [ -n "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" ] && echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > "$BUILD/local.properties"; }
+ASSETS="$BUILD/app/src/main/assets"; rm -f "$ASSETS/contents.json"; mkdir -p "$ASSETS/$ID"
+
+webp() { # src dst dim maxkb -> encodes a 512x512 (or tray) WebP guaranteed <= maxkb
+  local max=$(( $4 * 1000 )) q
+  for q in 90 80 70 60 50 40 30 20; do
+    magick "$1[0]" -strip -resize "${3}x${3}" -background none -gravity center -extent "${3}x${3}" \
+      -quality "$q" -define webp:method=6 "$2" 2>/dev/null || true
+    [ -f "$2" ] && [ "$(wc -c < "$2")" -le "$max" ] && return 0
+  done   # keep the smallest (q=20) if a very busy image still won't fit
+  return 0
+}
+echo "converting $n image(s) -> 512x512 WebP ..."
+i=0; files=()
+for src in "${imgs[@]}"; do
+  i=$((i+1)); dst="$ASSETS/$ID/$i.webp"; webp "$src" "$dst" 512 100
+  kb=$(( ($(wc -c < "$dst") + 999) / 1000 )); files+=("$i.webp")
+  printf '  %2d. %-40s -> %s.webp (%s KB)\n' "$i" "$(basename "$src")" "$i" "$kb"
+done
+webp "${imgs[0]}" "$ASSETS/$ID/tray.webp" 96 50   # tray from the first image
+
+# ---- contents.json ---------------------------------------------------------
+stickers=$(printf '%s\n' "${files[@]}" | jq -R --arg e "$EMOJI" '{image_file: ., emojis: [$e]}' | jq -s '.')
+jq -n --arg id "$ID" --arg name "$NAME" --arg pub "$PUBLISHER" --argjson st "$stickers" '{
+  android_play_store_link: "", ios_app_store_link: "",
+  sticker_packs: [ {
+    identifier: $id, name: $name, publisher: $pub, tray_image_file: "tray.webp",
+    image_data_version: "1", avoid_cache: false, animated_sticker_pack: false,
+    publisher_email: "", publisher_website: "", privacy_policy_website: "", license_agreement_website: "",
+    stickers: $st } ] }' > "$ASSETS/contents.json"
+
+# name the installed app after the pack
+if [ -f "$BUILD/app/src/main/res/values/strings.xml" ]; then
+  esc=$(printf '%s' "$NAME" | sed 's/[&/\]/\\&/g')
+  sed -i.bak "s#<string name=\"app_name\">[^<]*</string>#<string name=\"app_name\">${esc}</string>#" "$BUILD/app/src/main/res/values/strings.xml" && rm -f "$BUILD/app/src/main/res/values/strings.xml.bak"
+fi
+
+# ---- build the APK ---------------------------------------------------------
+echo "building APK (app-id $APPID) ..."
+( cd "$BUILD" && chmod +x gradlew && ./gradlew --no-daemon -q :app:assembleDebug -PpackAppId="$APPID" )
+apk=$(find "$BUILD/app/build/outputs/apk/debug" -name '*.apk' | head -1)
+[ -f "$apk" ] || { echo "build produced no APK" >&2; exit 1; }
+cp "$apk" "$OUT"
+echo
+echo "pack '$NAME' ($n stickers) -> $OUT"
+echo "install it:   adb install -r \"$OUT\""
+echo "then open the app on the phone and tap \"Add to WhatsApp\"."
+echo "keep $OUT: after any wipe/re-flash, re-install it and add again -- no re-doing the stickers."
