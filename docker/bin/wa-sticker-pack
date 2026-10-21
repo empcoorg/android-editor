@@ -59,7 +59,7 @@ ASSETS="$BUILD/app/src/main/assets"; rm -f "$ASSETS/contents.json"; mkdir -p "$A
 webp() { # src dst dim maxkb -> encodes a 512x512 (or tray) WebP guaranteed <= maxkb
   local max=$(( $4 * 1000 )) q
   for q in 90 80 70 60 50 40 30 20; do
-    magick "$1[0]" -resize "${3}x${3}" -background none -gravity center -extent "${3}x${3}" \
+    magick "$1[0]" -strip -resize "${3}x${3}" -background none -gravity center -extent "${3}x${3}" \
       -quality "$q" -define webp:method=6 "$2" 2>/dev/null || true
     [ -f "$2" ] && [ "$(wc -c < "$2")" -le "$max" ] && return 0
   done   # keep the smallest (q=20) if a very busy image still won't fit
