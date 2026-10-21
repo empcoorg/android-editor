@@ -1,12 +1,12 @@
 #!/bin/bash
-# Lightweight `ollama` CLI for the dev container. The real Ollama server runs in
-# the `ollama` compose service (or on the host); this talks to it over HTTP so
-# the dev image does not need to carry the multi-GB Ollama runtime.
+# Lightweight `ollama` CLI for the dev container. The real Ollama server runs on
+# the host (macOS: start it with `bash macos/host-services.sh`); this talks to it
+# over HTTP so the dev image does not need to carry the multi-GB Ollama runtime.
 #
 #   ollama list | ps | pull <model> | rm <model> | show <model> | run <model> [prompt]
 #   ollama version
 set -euo pipefail
-HOST="${OLLAMA_HOST:-http://ollama:11434}"
+HOST="${OLLAMA_HOST:-http://host.docker.internal:11436}"
 case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
 
 need() { command -v "$1" >/dev/null || { echo "missing $1" >&2; exit 1; }; }
@@ -70,7 +70,7 @@ case "$cmd" in
     while IFS= read -r -e -p '>>> ' input; do [ -n "$input" ] && chat "$input"; done; echo ;;
 
   serve|start)
-    echo "the server runs in the 'ollama' compose service: docker compose up -d ollama" >&2; exit 1 ;;
+    echo "the server runs on the host, not here; on macOS start it with: bash macos/host-services.sh" >&2; exit 1 ;;
 
   *) echo "unknown command: $cmd" >&2; usage 2 ;;
 esac

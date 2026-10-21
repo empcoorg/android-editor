@@ -6,8 +6,9 @@
 #   plan model      VSCODE_PLAN_MODEL        (Cline: Plan mode, Roo: architect/debug;
 #                                            defaults to the model above)
 #
-# Models come from .env through docker compose: local Ollama models, or the
-# single model behind a cloud endpoint (any OpenAI-compatible provider).
+# Models come from .env through docker compose: local Ollama models, the single
+# model behind a cloud endpoint (any OpenAI-compatible provider), or Claude when
+# LLM_BACKEND=anthropic.
 # Runs at every container start.
 # Cline: seeds ~/.cline/data/{globalState,secrets}.json, but only when the .env
 # values changed since the last seed, so choices made in Cline's UI survive.
@@ -17,7 +18,7 @@ set -euo pipefail
 
 BACKEND="${LLM_BACKEND:-local}"
 [ "$BACKEND" = runpod ] && BACKEND=cloud
-HOST="${OLLAMA_HOST:-http://ollama:11434}"
+HOST="${OLLAMA_HOST:-http://host.docker.internal:11436}"
 case "$HOST" in http://*|https://*) ;; *) HOST="http://$HOST" ;; esac
 CTX="${VSCODE_NUM_CTX:-${OLLAMA_NUM_CTX:-32768}}"
 strip() { local m="${1:-}"; echo "${m#ollama/}"; }
@@ -29,6 +30,10 @@ if [ "$BACKEND" = cloud ]; then
   CLOUD_KEY="${CLOUD_LLM_KEY:-${RUNPOD_LLM_KEY:-}}"
   CLOUD_ID="${CLOUD_LLM_MODEL:-${RUNPOD_LLM_MODEL:-}}"; [ -n "$CLOUD_ID" ] || { echo "CLOUD_LLM_MODEL unset" >&2; exit 1; }
 fi
+if [ "$BACKEND" = anthropic ]; then
+  ANTH_KEY="${ANTHROPIC_API_KEY:-}"; [ -n "$ANTH_KEY" ] || { echo "ANTHROPIC_API_KEY unset" >&2; exit 1; }
+  ANTH_ID="${ANTHROPIC_MODEL:-claude-sonnet-5-5}"
+fi
 DEFAULT="${OPENCODE_MODEL:-ollama/qwen3.8:27b}"
 # Cline's Plan mode and Roo's architect/debug modes call tools (they read files),
 # so they cannot use a model without tool-calling support. Default them to the
@@ -38,7 +43,9 @@ FALLBACK="${VSCODE_PLAN_MODEL:-$DEFAULT}"
 # the default model (needed if the fallback model cannot call tools).
 REASONER_MODES="${ROO_REASONER_MODES-architect debug}"
 
-if [ "$BACKEND" = cloud ]; then D_ID="$CLOUD_ID"; F_ID="$CLOUD_ID"; else D_ID="$(strip "$DEFAULT")"; F_ID="$(strip "$FALLBACK")"; fi
+if [ "$BACKEND" = cloud ]; then D_ID="$CLOUD_ID"; F_ID="$CLOUD_ID"
+elif [ "$BACKEND" = anthropic ]; then D_ID="$ANTH_ID"; F_ID="$ANTH_ID"
+else D_ID="$(strip "$DEFAULT")"; F_ID="$(strip "$FALLBACK")"; fi
 
 # ------------------------------------------------------------------ Roo Code
 ROO="$HOME/.config/android-editor/roo-code-settings.json"
@@ -46,6 +53,8 @@ mkdir -p "$(dirname "$ROO")"
 profile() { # id model
   if [ "$BACKEND" = cloud ]; then
     jq -n --arg id "$1" --arg m "$CLOUD_ID" --arg u "$CLOUD_URL" --arg k "$CLOUD_KEY" '{id:$id, apiProvider:"openai", openAiModelId:$m, openAiBaseUrl:$u, openAiApiKey:$k, openAiStreamingEnabled:true}'
+  elif [ "$BACKEND" = anthropic ]; then
+    jq -n --arg id "$1" --arg m "$ANTH_ID" --arg k "$ANTH_KEY" '{id:$id, apiProvider:"anthropic", apiModelId:$m, apiKey:$k}'
   else
     jq -n --arg id "$1" --arg m "$2" --arg u "$HOST" --argjson c "$CTX" '{id:$id, apiProvider:"ollama", ollamaModelId:$m, ollamaBaseUrl:$u, ollamaNumCtx:$c}'
   fi
@@ -64,25 +73,33 @@ jq -n --arg cur "$default_name" --argjson cfg "$configs" --argjson modes "$modes
 
 # ------------------------------------------------------------------ Cline
 CL="$HOME/.cline/data"; mkdir -p "$CL"
-seed=$(printf 'v4|%s|%s|%s|%s|%s' "$BACKEND" "$DEFAULT" "$FALLBACK" "${CLOUD_URL:-$HOST}" "$CTX" | sha256sum | cut -c1-16)
+seed=$(printf 'v5|%s|%s|%s|%s|%s|%s' "$BACKEND" "$DEFAULT" "$FALLBACK" "${CLOUD_URL:-$HOST}" "${ANTH_ID:-}${ANTH_KEY:-}" "$CTX" | sha256sum | cut -c1-16)
 if [ "$(cat "$CL/.android-editor-seed" 2>/dev/null)" != "$seed" ]; then
   [ -s "$CL/globalState.json" ] || echo '{}' > "$CL/globalState.json"
   mode_keys() { # plan|act id
     if [ "$BACKEND" = cloud ]; then
       jq -n --arg p "$1" --arg m "$CLOUD_ID" '{($p+"ModeApiProvider"): "openai", ($p+"ModeOpenAiModelId"): $m}'
+    elif [ "$BACKEND" = anthropic ]; then
+      jq -n --arg p "$1" --arg m "$ANTH_ID" '{($p+"ModeApiProvider"): "anthropic", ($p+"ModeApiModelId"): $m}'
     else
       jq -n --arg p "$1" --arg m "$2" '{($p+"ModeApiProvider"): "ollama", ($p+"ModeOllamaModelId"): $m}'
     fi
   }
-  conn=$([ "$BACKEND" = cloud ] \
-     && jq -n --arg u "$CLOUD_URL" '{openAiBaseUrl: $u, welcomeViewCompleted: true}' \
-     || jq -n --arg u "$HOST" --arg c "$CTX" '{ollamaBaseUrl: $u, ollamaApiOptionsCtxNum: $c, welcomeViewCompleted: true}')
+  if [ "$BACKEND" = cloud ]; then
+    conn=$(jq -n --arg u "$CLOUD_URL" '{openAiBaseUrl: $u, welcomeViewCompleted: true}')
+  elif [ "$BACKEND" = anthropic ]; then
+    conn=$(jq -n '{welcomeViewCompleted: true}')
+  else
+    conn=$(jq -n --arg u "$HOST" --arg c "$CTX" '{ollamaBaseUrl: $u, ollamaApiOptionsCtxNum: $c, welcomeViewCompleted: true}')
+  fi
   jq --argjson act "$(mode_keys act "$D_ID")" --argjson plan "$(mode_keys plan "$F_ID")" --argjson conn "$conn" \
      '. + $act + $plan + $conn' \
      "$CL/globalState.json" > "$CL/globalState.json.tmp" && mv "$CL/globalState.json.tmp" "$CL/globalState.json"
   [ -s "$CL/secrets.json" ] || echo '{}' > "$CL/secrets.json"
   if [ "$BACKEND" = cloud ]; then
     jq --arg k "$CLOUD_KEY" '. + {openAiApiKey: $k}' "$CL/secrets.json" > "$CL/secrets.json.tmp"
+  elif [ "$BACKEND" = anthropic ]; then
+    jq --arg k "$ANTH_KEY" '. + {apiKey: $k}' "$CL/secrets.json" > "$CL/secrets.json.tmp"
   else
     jq 'del(.apiKey, .openAiApiKey)' "$CL/secrets.json" > "$CL/secrets.json.tmp"
   fi

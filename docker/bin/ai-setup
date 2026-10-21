@@ -16,10 +16,12 @@ set -euo pipefail
 
 # Backend: "local" uses Ollama on this machine; "cloud" uses a remote
 # OpenAI-compatible endpoint (any provider) set in .env (LLM_BACKEND,
-# CLOUD_LLM_*). Legacy "runpod" / RUNPOD_LLM_* are accepted as aliases.
+# CLOUD_LLM_*); "anthropic" uses Claude (ANTHROPIC_API_KEY, ANTHROPIC_MODEL).
+# Legacy "runpod" / RUNPOD_LLM_* are accepted as aliases.
 BACKEND="${LLM_BACKEND:-local}"
 [ "$BACKEND" = runpod ] && BACKEND=cloud
 CLOUD_URL="${CLOUD_LLM_URL:-${RUNPOD_LLM_URL:-}}"; CLOUD_KEY="${CLOUD_LLM_KEY:-${RUNPOD_LLM_KEY:-}}"; CLOUD_MODEL="${CLOUD_LLM_MODEL:-${RUNPOD_LLM_MODEL:-}}"
+ANTH_KEY="${ANTHROPIC_API_KEY:-}"; ANTH_MODEL="${ANTHROPIC_MODEL:-claude-sonnet-5-5}"
 PROVIDER="${CLOUD_PROVIDER:-}"
 if [ -z "$PROVIDER" ]; then
   # Legacy RUNPOD_LLM_* configs keep the runpod label.
@@ -74,6 +76,25 @@ if [ "$BACKEND" = cloud ]; then
     autoupdate: false, share: "disabled"
   }' > "$DIR/opencode.json"
   echo "opencode: cloud $CLOUD_MODEL via $PROVIDER at $CLOUD_URL"
+elif [ "$BACKEND" = anthropic ]; then
+  [ -n "$ANTH_KEY" ] || { echo "LLM_BACKEND=anthropic but ANTHROPIC_API_KEY is unset" >&2; exit 1; }
+  # Claude via OpenCode's built-in anthropic provider. One model is both the
+  # main agent and the @reasoner.
+  jq -n --arg key "$ANTH_KEY" --arg m "$ANTH_MODEL" '{
+    "$schema": "https://opencode.ai/config.json",
+    provider: { anthropic: { options: { apiKey: $key } } },
+    model: ("anthropic/" + $m),
+    small_model: ("anthropic/" + $m),
+    agent: { reasoner: {
+      description: "Second opinion. Call it when you are stuck: a command or build failed twice, an error makes no sense, or before any step that writes to a phone that you are not sure is safe. It cannot run commands or edit files.",
+      mode: "subagent", model: ("anthropic/" + $m), temperature: 0.6,
+      permission: { edit: "deny", bash: "deny", webfetch: "deny" },
+      prompt: "You are a careful senior engineer acting as a second opinion for a coding agent that builds Android apps and roots Android phones. You cannot run commands. Identify the most likely root cause from the evidence, say what would confirm it, and end with a short numbered plan. Flag any step that could brick a device or lose data."
+    } },
+    permission: { bash: "allow", external_directory: "allow" },
+    autoupdate: false, share: "disabled"
+  }' > "$DIR/opencode.json"
+  echo "opencode: anthropic $ANTH_MODEL (Claude)"
 else
 # bash + external_directory are allowed: this container exists to run adb,
 # fastboot and the firmware tools, which live outside /workspace and touch

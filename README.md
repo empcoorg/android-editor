@@ -4,6 +4,10 @@ A Docker dev container for **building Android apps** and **rooting Android
 phones**, with a local AI coding agent. On macOS, phones plugged into USB reach
 the container over USB/IP.
 
+**Contents:** [Choosing your models](#choosing-your-models) · [Quick start](#quick-start-macos) · [Cline & Roo Code](#vs-code-with-cline-and-roo-code) · [Cloud & Claude backends](#cloud-model-backend-optional) · [Phones over USB](#phones-over-usb) · [Check before you buy](#checking-a-phone-before-you-buy-it) · [Rooting](#rooting-a-phone) · [Building an app](#building-an-app) · [Settings](#settings-env) · [Layout](#layout)
+
+> **Not sure whether to run models locally, in the cloud, or use Claude — or when Docker is even involved?** See **[docs/ai-backends.md](docs/ai-backends.md)**: the three backends, cloud quickstarts (hosted API, RunPod, Vast.ai), the escalation policy, and a map of what runs on the host vs in the container vs the cloud.
+
 | Area | In the container |
 |---|---|
 | Build apps | OpenJDK 17 and 11, Maven, Android SDK (cmdline-tools, platform-tools, build-tools 36 and 33.0.2, platforms 36 and 33), Gradle 8.14 as `gradle` and Gradle 7.5.1 as `gradle7`. Gradle downloads any other SDK version a project asks for. NDK optional (`INSTALL_NDK=1`). |
